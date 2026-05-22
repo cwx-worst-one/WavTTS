@@ -36,8 +36,6 @@ OUTPUT_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/data/e2e_eval_result/WavTTS/ljspeech_inse
 OUTPUT_DIR=""
 
 cfg_strength=3.0
-cfg_interval_min=0.0
-cfg_interval_max=1.0
 nfe_step=50         # 16, 32, 50
 ode_method="euler"  # euler, heun
 timestep_mapping="power"   # uniform, sway_sampling, power, logistic_normal
@@ -224,7 +222,7 @@ make_output_dir() {
     if [ "${shift}" != "1.0" ]; then
         gen_wav_dir+="_shift${shift}"
     fi
-    gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}"
+    gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}"
     gen_wav_dir+="_target_rms0.1"
     echo "${gen_wav_dir}"
 }
@@ -246,14 +244,14 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         for task in "${TASKS[@]}"; do
             GEN_WAV_DIR=$(make_output_dir ${seed} "${OUTPUT_DIR}")
             echo ">>>>>>>> Output dir: ${GEN_WAV_DIR}"
-            echo ">>>>>>>> Executing fixed-prompt infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} -p \"${LS_TEST_CLEAN_PATH}\" ${LOCAL} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --output_dir \"${GEN_WAV_DIR}\" --fixed_prompt_wav \"${FIXED_PROMPT_WAV}\" --fixed_prompt_text \"${FIXED_PROMPT_TEXT}\" --ljspeech_inset_meta \"${LJSPEECH_INSET_META}\" --ljspeech_wav_dir \"${LJSPEECH_WAV_DIR}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
+            echo ">>>>>>>> Executing fixed-prompt infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} -p \"${LS_TEST_CLEAN_PATH}\" ${LOCAL} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --output_dir \"${GEN_WAV_DIR}\" --fixed_prompt_wav \"${FIXED_PROMPT_WAV}\" --fixed_prompt_text \"${FIXED_PROMPT_TEXT}\" --ljspeech_inset_meta \"${LJSPEECH_INSET_META}\" --ljspeech_wav_dir \"${LJSPEECH_WAV_DIR}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
 
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --ljspeech_inset_meta "${LJSPEECH_INSET_META}" --ljspeech_wav_dir "${LJSPEECH_WAV_DIR}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --ljspeech_inset_meta "${LJSPEECH_INSET_META}" --ljspeech_wav_dir "${LJSPEECH_WAV_DIR}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --ljspeech_inset_meta "${LJSPEECH_INSET_META}" --ljspeech_wav_dir "${LJSPEECH_WAV_DIR}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --ljspeech_inset_meta "${LJSPEECH_INSET_META}" --ljspeech_wav_dir "${LJSPEECH_WAV_DIR}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
         done
 

@@ -20,8 +20,6 @@ ckpt_step=1500000    # 200000, 400000, 550000, 700000, 900000, 1000000, 1100000
 seed=0
 nfe_step=50         # 32, 50
 cfg_strength=3.0
-cfg_interval_min=0.0
-cfg_interval_max=1.0
 timestep_mapping="power"    # uniform, power, sway_sampling, logistic_normal
 swaysampling=-1.0
 timestep_power=2.0
@@ -58,7 +56,7 @@ fi
 if [[ "${shift}" != "1.0" ]]; then
     gen_wav_subdir+="_shift${shift}"
 fi
-gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}_target_rms${target_rms}"   # _vocos_ss, _no_vocoder_ss, _speed1.0_load-fp32_infer-bf16, _speed1.0
+gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_target_rms${target_rms}"   # _vocos_ss, _no_vocoder_ss, _speed1.0_load-fp32_infer-bf16, _speed1.0
 
 if [[ "${use_ema}" == "false" ]]; then
     gen_wav_subdir+="_no_ema"

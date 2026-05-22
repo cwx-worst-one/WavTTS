@@ -20,15 +20,11 @@ langs=("en")
 ckpt_steps=(600000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 seed=0
 nfe_step=50         # 32, 50, 100
-ode_method="euler"   # euler, heun
+ode_method="euler"
 cfg_strength=3.0
-cfg_interval_min=0.0
-cfg_interval_max=1.0
-timestep_mapping="power"    # uniform, power, sway_sampling, logistic_normal
+timestep_mapping="power"    # uniform, power, sway_sampling
 swaysampling=-1.0
 timestep_power=2.0
-timestep_logistic_normal_loc=-0.8
-timestep_logistic_normal_scale=0.8
 shift="2.0"
 target_rms=0.1
 use_ema=true                # true, false
@@ -52,13 +48,10 @@ fi
 if [[ "${timestep_mapping}" == "power" ]]; then
     gen_wav_subdir+="_power${timestep_power}"
 fi
-if [[ "${timestep_mapping}" == "logistic_normal" ]]; then
-    gen_wav_subdir+="_lnloc${timestep_logistic_normal_loc}_lnscale${timestep_logistic_normal_scale}"
-fi
 if [[ "${shift}" != "1.0" ]]; then
     gen_wav_subdir+="_shift${shift}"
 fi
-gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}_target_rms${target_rms}"
+gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_target_rms${target_rms}"
 
 if [[ "${use_ema}" == "false" ]]; then
     gen_wav_subdir+="_no_ema"

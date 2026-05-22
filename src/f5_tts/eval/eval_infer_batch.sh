@@ -23,15 +23,11 @@ CKPT_PATH_DIR=/mnt/hdfs/ssd_hldy/chenwenxi.sylvan/exp/nar_wav_tts/emilia/F5TTS_v
 
 cfg_strength=3.0
 infer_x_pred_clip=  # empty or <=0 means disabled; set to latents scale, e.g. 8.0, to enable x_pred clamp
-cfg_interval_min=0.0
-cfg_interval_max=1.0
 nfe_step=50         # 16, 32, 50
-ode_method="euler"  # euler, heun
-timestep_mapping="power"   # uniform, sway_sampling, power, logistic_normal
+ode_method="euler"
+timestep_mapping="power"   # uniform, sway_sampling, power
 swaysampling=-1
 timestep_power=2.0
-timestep_logistic_normal_loc=-0.8
-timestep_logistic_normal_scale=0.8
 shift="2.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
@@ -74,14 +70,6 @@ while [[ $# -gt 0 ]]; do
             timestep_power="$2"
             shift 2
             ;;
-        --timestep-logistic-normal-loc)
-            timestep_logistic_normal_loc="$2"
-            shift 2
-            ;;
-        --timestep-logistic-normal-scale)
-            timestep_logistic_normal_scale="$2"
-            shift 2
-            ;;
         --shift)
             shift="$2"
             shift 2
@@ -98,10 +86,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ode_method" in
-    euler|heun)
+    euler)
         ;;
     *)
-        echo "======== Invalid ode method: ${ode_method}. Expected one of: euler, heun"
+        echo "======== Invalid ode method: ${ode_method}. Expected: euler"
         exit 1
         ;;
 esac
@@ -136,10 +124,6 @@ RESULT_EXPNAME="${RESULT_MODEL_NAME}${RESULT_EXP_SUFFIX}"
 if [ "${timestep_mapping}" = "power" ]; then
     echo "======== Timestep power: ${timestep_power}"
 fi
-if [ "${timestep_mapping}" = "logistic_normal" ]; then
-    echo "======== Timestep logistic normal loc: ${timestep_logistic_normal_loc}"
-    echo "======== Timestep logistic normal scale: ${timestep_logistic_normal_scale}"
-fi
 if [ "${shift}" != "1.0" ]; then
     echo "======== Shift: ${shift}"
 fi
@@ -166,13 +150,10 @@ execute_eval_tasks() {
     if [ "${timestep_mapping}" = "power" ]; then
         gen_wav_dir+="_power${timestep_power}"
     fi
-    if [ "${timestep_mapping}" = "logistic_normal" ]; then
-        gen_wav_dir+="_lnloc${timestep_logistic_normal_loc}_lnscale${timestep_logistic_normal_scale}"
-    fi
     if [ "${shift}" != "1.0" ]; then
         gen_wav_dir+="_shift${shift}"
     fi
-    gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}"
+    gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}"
     if [ -n "${infer_x_pred_clip}" ] && [ "${infer_x_pred_clip}" != "0" ] && [ "${infer_x_pred_clip}" != "0.0" ]; then
         gen_wav_dir+="_xpredclip${infer_x_pred_clip}"
     fi
@@ -227,15 +208,15 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} ${INFER_X_PRED_CLIP_ARG} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
+            echo ">>>>>>>> Executing infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} ${INFER_X_PRED_CLIP_ARG} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
             
             # Execute infer task (foreground execution, wait for completion)
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} ${INFER_X_PRED_CLIP_ARG} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} ${INFER_X_PRED_CLIP_ARG} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} ${INFER_X_PRED_CLIP_ARG} --cfg_scale_interval_min ${cfg_interval_min} --cfg_scale_interval_max ${cfg_interval_max} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} ${INFER_X_PRED_CLIP_ARG} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
             
             # If not infer-only mode, launch corresponding eval task

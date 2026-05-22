@@ -157,38 +157,6 @@ class CFM(nn.Module):
             denom = denom.unsqueeze(-1)
         return (x_pred - z) / denom
 
-    def _odeint_heun(self, fn, y0, t):
-        """Heun solver with a final Euler step, following JiT's sampler style."""
-        if len(t) < 2:
-            return y0.unsqueeze(0)
-
-        ys = [y0]
-        y = y0
-
-        # Predictor-corrector for all but the last interval.
-        for i in range(len(t) - 2):
-            t_i = t[i]
-            t_next = t[i + 1]
-            dt = t_next - t_i
-
-            self.transformer.clear_cache()
-            v_i = fn(t_i, y)
-            y_euler = y + dt * v_i
-
-            self.transformer.clear_cache()
-            v_next = fn(t_next, y_euler)
-
-            y = y + dt * 0.5 * (v_i + v_next)
-            ys.append(y)
-
-        # Final step uses Euler to avoid evaluating fn at t=1.
-        self.transformer.clear_cache()
-        y = y + (t[-1] - t[-2]) * fn(t[-2], y)
-        ys.append(y)
-
-        self.transformer.clear_cache()
-        return torch.stack(ys)
-
     @torch.no_grad()
     def sample(
         self,
@@ -199,12 +167,9 @@ class CFM(nn.Module):
         lens: int["b"] | None = None,
         steps=32,
         cfg_strength=1.0,
-        cfg_scale_interval=(0.0, 1.0),
         sway_sampling_coef=None,
         timestep_mapping="sway_sampling",
         timestep_power=None,
-        timestep_logistic_normal_loc=0.0,
-        timestep_logistic_normal_scale=1.0,
         shift=1.0,
         seed: int | None = None,
         max_duration=4096,
@@ -307,11 +272,7 @@ class CFM(nn.Module):
             v_cond = to_v(pred)
             v_uncond = to_v(null_pred)
 
-            # CFG with interval control
-            low, high = cfg_scale_interval
-            apply_cfg = (t < high) and ((low == 0.0) or (t > low))
-            cfg_scale = cfg_strength if apply_cfg else 0.0
-            return v_cond + (v_cond - v_uncond) * cfg_scale
+            return v_cond + (v_cond - v_uncond) * cfg_strength
 
         # noise input
         # to make sure batch inference result is same with different batch size, and for sure single inference
@@ -347,11 +308,6 @@ class CFM(nn.Module):
             if timestep_power is None:
                 raise ValueError("timestep_power must be provided when timestep_mapping='power'")
             t = t.pow(timestep_power)
-        elif timestep_mapping == "logistic_normal":
-            timestep_quantiles = torch.arange(steps + 1, device=self.device, dtype=torch.float32) / steps
-            timestep_normal = torch.distributions.Normal(0.0, 1.0)
-            timestep_latents = timestep_normal.icdf(timestep_quantiles)
-            t = torch.sigmoid(timestep_logistic_normal_loc + timestep_logistic_normal_scale * timestep_latents)
         else:
             raise ValueError(f"Unknown timestep_mapping: {timestep_mapping}")
 
@@ -359,11 +315,10 @@ class CFM(nn.Module):
         if effective_shift != 1.0:
             t = t / (t + effective_shift * (1 - t))
 
-        ode_method = self.odeint_kwargs.get("method", "euler")
-        if ode_method == "heun":
-            trajectory = self._odeint_heun(fn, y0, t)
-        else:
-            trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
+        # WavTTS inference uses Euler ODE sampling.
+        odeint_kwargs = dict(self.odeint_kwargs)
+        odeint_kwargs["method"] = "euler"
+        trajectory = odeint(fn, y0, t, **odeint_kwargs)
         self.transformer.clear_cache()
 
         sampled = trajectory[-1]

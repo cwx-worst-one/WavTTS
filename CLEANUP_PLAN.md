@@ -130,6 +130,8 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 删除旧 `mel_spec.mel_stft.*` checkpoint key 兼容清理逻辑；当前 WavTTS checkpoint 不包含这些 key。
 - [x] 更新 `pyproject.toml` 发布元信息为 WavTTS，并新增 `wavtts_infer-cli` console script；旧 `f5-tts_infer-cli` 暂保留兼容。
 - [x] 删除 DiT 中未使用的 `audio_proj_type=conv_mlp` 和 `proj_out_type=final_conv/conv_mlp` 分支；输出投影固定为 linear。
+- [x] 清理推理采样分支：ODE 固定 Euler，删除 Heun 特殊路径；删除 inference `logistic_normal` timestep mapping。
+- [x] 删除 `cfg_scale_interval` 推理开关；CFG 在 `cfg_strength > 0` 时全程生效。
 
 ---
 
