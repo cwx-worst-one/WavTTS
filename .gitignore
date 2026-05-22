@@ -131,7 +131,6 @@ recipes/bigmusic/tests/data/
 recipes/leadsheet
 .attach_*
 *.ipynb
-*.png
 scripts_usr
 .deploy_cache
 output
