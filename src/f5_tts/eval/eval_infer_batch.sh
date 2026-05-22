@@ -119,7 +119,7 @@ for dtype_name in "$LOAD_DTYPE" "$INFER_DTYPE"; do
     esac
 done
 
-echo "======== Starting F5-TTS batch evaluation task..."
+echo "======== Starting WavTTS batch evaluation task..."
 echo "======== Load dtype: ${LOAD_DTYPE}"
 echo "======== Infer dtype: ${INFER_DTYPE}"
 echo "======== Result model name: ${RESULT_MODEL_NAME}"

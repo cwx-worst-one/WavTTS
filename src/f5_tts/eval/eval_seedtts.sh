@@ -58,7 +58,7 @@ fi
 if [[ "${shift}" != "1.0" ]]; then
     gen_wav_subdir+="_shift${shift}"
 fi
-gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}_target_rms${target_rms}"   # _vocos_ss, _no_vocoder_ss, _speed1.0_load-fp32_infer-bf16, _speed1.0
+gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_cfgitv${cfg_interval_min}-${cfg_interval_max}_target_rms${target_rms}"
 
 if [[ "${use_ema}" == "false" ]]; then
     gen_wav_subdir+="_no_ema"

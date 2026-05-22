@@ -5,8 +5,8 @@ print("  -> least padding, gather wavs with accumulated frames in a batch\n")
 
 # data
 total_hours = 95282
-mel_hop_length = 256
-mel_sampling_rate = 24000
+wav_frame_len = 160
+target_sample_rate = 16000
 
 # target
 wanted_max_updates = 1200000
@@ -18,7 +18,7 @@ grad_accum = 1
 
 # intermediate
 mini_batch_frames = frames_per_gpu * grad_accum * gpus
-mini_batch_hours = mini_batch_frames * mel_hop_length / mel_sampling_rate / 3600
+mini_batch_hours = mini_batch_frames * wav_frame_len / target_sample_rate / 3600
 updates_per_epoch = total_hours / mini_batch_hours
 # steps_per_epoch = updates_per_epoch * grad_accum
 

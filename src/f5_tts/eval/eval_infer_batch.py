@@ -318,18 +318,18 @@ def main():
 
     with accelerator.split_between_processes(prompts_all) as prompts:
         for prompt in tqdm(prompts, disable=not accelerator.is_local_main_process):
-            utts, ref_rms_list, ref_mels, ref_mel_lens, total_mel_lens, final_text_list = prompt
-            ref_mels = ref_mels.to(device)
-            ref_mel_lens = torch.tensor(ref_mel_lens, dtype=torch.long).to(device)
-            total_mel_lens = torch.tensor(total_mel_lens, dtype=torch.long).to(device)
+            utts, ref_rms_list, ref_wavs, ref_wav_lens, total_wav_lens, final_text_list = prompt
+            ref_wavs = ref_wavs.to(device)
+            ref_wav_lens = torch.tensor(ref_wav_lens, dtype=torch.long).to(device)
+            total_wav_lens = torch.tensor(total_wav_lens, dtype=torch.long).to(device)
 
             # Inference
             with torch.inference_mode():
                 with torch.autocast("cuda", dtype=autocast_dtype, enabled=autocast_dtype is not None):
                     generated, _ = model.sample(
-                        cond=ref_mels,
+                        cond=ref_wavs,
                         text=final_text_list,
-                        duration=total_mel_lens,
+                        duration=total_wav_lens,
                         steps=nfe_step,
                         cfg_strength=cfg_strength,
                         cfg_scale_interval=cfg_scale_interval,
@@ -346,8 +346,8 @@ def main():
                     )
                     # Final result
                     for i, gen in enumerate(generated):
-                        start_idx = ref_mel_lens[i].item()
-                        end_idx = total_mel_lens[i].item()
+                        start_idx = ref_wav_lens[i].item()
+                        end_idx = total_wav_lens[i].item()
                         generated_wave = gen[start_idx:end_idx].cpu()
 
                         if ref_rms_list[i] < target_rms:

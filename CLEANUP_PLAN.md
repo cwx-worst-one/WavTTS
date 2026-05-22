@@ -123,6 +123,9 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 清理 `infer_cli.py` 旧 F5/E2 checkpoint fallback：WavTTS 推理必须显式提供 `--ckpt_file`，但保留 `hf://` / URL cached_path 接口。
 - [x] 更新 infer example toml 默认模型为 `WavTTS_scale_8_16k`，并显式保留 `ckpt_file` 占位。
 - [x] 将 WavTTS configs 中的 `model.name` 从 `F5TTS_v1_Large_wav` 改为 `WavTTS_Large`。
+- [x] 清理主线 eval shell 中残留的 F5-TTS/vocoder 提示文本；真实历史 checkpoint 路径暂保留。
+- [x] 清理 eval/infer/CFM 中低风险 mel 命名残留：batch eval 变量改为 wav，推理临时变量和 raw waveform 注释同步更新。
+- [x] 清理 `dit.py` 注释/局部变量和 `count_max_epoch.py` 中的 mel 命名残留。
 
 ---
 

@@ -510,7 +510,7 @@ def infer_batch_process(
             for future in progress.tqdm(futures) if progress is not None else futures:
                 result = future.result()
                 if result:
-                    generated_wave, generated_mel_spec = next(result)
+                    generated_wave, _ = next(result)
                     generated_waves.append(generated_wave)
 
         if generated_waves:

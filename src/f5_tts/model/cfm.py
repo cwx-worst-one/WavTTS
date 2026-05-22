@@ -384,13 +384,13 @@ class CFM(nn.Module):
 
     def forward(
         self,
-        inp: float["b n d"] | float["b nw"],  # mel or raw wave
+        inp: float["b nw"],  # raw waveform
         text: int["b nt"] | list[str],
         *,
         lens: int["b"] | None = None,
         noise_scheduler: str | None = None,
     ):
-        # handle raw wave
+        # handle raw waveform
         if inp.ndim != 2:
             raise ValueError(f"WavTTS expects raw waveform input [B, N], got {tuple(inp.shape)}")
 
@@ -424,7 +424,7 @@ class CFM(nn.Module):
         if exists(mask):
             rand_span_mask &= mask
 
-        # mel / raw wave is x1
+        # x1 is raw waveform
         x1 = inp
 
         x1 = x1 * self.latents_scale

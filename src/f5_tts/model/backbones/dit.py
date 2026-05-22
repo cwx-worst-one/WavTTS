@@ -44,7 +44,7 @@ class TextEmbedding(nn.Module):
 
         if conv_layers > 0:
             self.extra_modeling = True
-            self.precompute_max_pos = 8192  # 8192 is ~87.38s of 24khz audio; 4096 is ~43.69s of 24khz audio
+            self.precompute_max_pos = 8192  # 8192 waveform tokens is ~81.92s at 16k / wav_frame_len=160
             self.register_buffer("freqs_cis", precompute_freqs_cis(text_dim, self.precompute_max_pos), persistent=False)
             self.text_blocks = nn.Sequential(
                 *[ConvNeXtV2Block(text_dim, text_dim * conv_mult) for _ in range(conv_layers)]
@@ -53,40 +53,39 @@ class TextEmbedding(nn.Module):
             self.extra_modeling = False
 
     def average_upsample_text_by_mask(self, text, text_mask):
-        batch, text_len, text_dim = text.shape
+        batch, seq_len, text_dim = text.shape
 
-        audio_len = text_len  # cuz text already padded to same length as audio sequence
         text_lens = text_mask.sum(dim=1)  # [batch]
 
         upsampled_text = torch.zeros_like(text)
 
         for i in range(batch):
-            text_len = text_lens[i].item()
+            valid_text_len = text_lens[i].item()
 
-            if text_len == 0:
+            if valid_text_len == 0:
                 continue
 
             valid_ind = torch.where(text_mask[i])[0]
-            valid_data = text[i, valid_ind, :]  # [text_len, text_dim]
+            valid_data = text[i, valid_ind, :]  # [valid_text_len, text_dim]
 
-            base_repeat = audio_len // text_len
-            remainder = audio_len % text_len
+            base_repeat = seq_len // valid_text_len
+            remainder = seq_len % valid_text_len
 
             indices = []
-            for j in range(text_len):
-                repeat_count = base_repeat + (1 if j >= text_len - remainder else 0)
+            for j in range(valid_text_len):
+                repeat_count = base_repeat + (1 if j >= valid_text_len - remainder else 0)
                 indices.extend([j] * repeat_count)
 
-            indices = torch.tensor(indices[:audio_len], device=text.device, dtype=torch.long)
-            upsampled = valid_data[indices]  # [audio_len, text_dim]
+            indices = torch.tensor(indices[:seq_len], device=text.device, dtype=torch.long)
+            upsampled = valid_data[indices]  # [seq_len, text_dim]
 
-            upsampled_text[i, :audio_len, :] = upsampled
+            upsampled_text[i, :seq_len, :] = upsampled
 
         return upsampled_text
 
     def forward(self, text: int["b nt"], seq_len, drop_text=False):
         text = text + 1  # use 0 as filler token. preprocess of batch pad -1, see list_str_to_idx()
-        text = text[:, :seq_len]  # curtail if character tokens are more than the mel spec tokens
+        text = text[:, :seq_len]  # curtail if character tokens are more than waveform tokens
         text = F.pad(text, (0, seq_len - text.shape[1]), value=0)  # (opt.) if not self.average_upsampling:
         if self.mask_padding:
             text_mask = text == 0
@@ -116,7 +115,7 @@ class TextEmbedding(nn.Module):
         return text
 
 
-# noised input audio and context mixing embedding
+# noised waveform and context mixing embedding
 
 
 class InputEmbedding(nn.Module):
@@ -450,12 +449,12 @@ class DiT(nn.Module):
 
     def forward(
         self,
-        x: float["b n d"] | float["b nw"],  # nosied input audio
-        cond: float["b n d"] | float["b nw"],  # masked cond audio
+        x: float["b nw"],  # noised waveform
+        cond: float["b nw"],  # masked conditioning waveform
         text: int["b nt"],  # text
         time: float["b"] | float[""],  # time step
         mask: bool["b n"] | bool["b nw"] | None = None,
-        drop_audio_cond: bool = False,  # cfg for cond audio
+        drop_audio_cond: bool = False,  # cfg for conditioning waveform
         drop_text: bool = False,  # cfg for text
         cfg_infer: bool = False,  # cfg inference, pack cond & uncond forward
         cache: bool = False,
@@ -474,7 +473,7 @@ class DiT(nn.Module):
         if time.ndim == 0:
             time = time.repeat(batch)
 
-        # t: conditioning time, text: text, x: noised audio + cond audio + text
+        # t: conditioning time, text: text, x: noised waveform + conditioning waveform + text
         t = self.time_embed(time)
 
         if cfg_infer:  # pack cond & uncond forward: b n d -> 2b n d
