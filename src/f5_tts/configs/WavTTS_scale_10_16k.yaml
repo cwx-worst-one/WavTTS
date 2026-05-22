@@ -22,7 +22,6 @@ model:
   tokenizer: pinyin  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
-  wav_input: True
   cfm:
     prediction: x_pred         # flow | x_pred
     loss_space: v         # flow | v   (x_pred 模式下一般用 v)
@@ -54,9 +53,6 @@ model:
     audio_proj_hidden: 768
   waveform:
     target_sample_rate: 16000
-    hop_length: 160       # 160 for 16k, 240 for 24k
-    win_length: 1024
-    n_fft: 1024
     wav_frame_len: 160    # 160 @16k = 100Hz
 
 ckpts:

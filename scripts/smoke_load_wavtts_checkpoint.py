@@ -51,7 +51,6 @@ def main():
         waveform_kwargs=cfg.model.waveform,
     )
 
-    assert model.wav_input_only is True
     assert model.wav_frame_len == int(cfg.model.waveform.wav_frame_len)
     assert model.num_channels == int(cfg.model.waveform.wav_frame_len)
     assert model.mel_spec is None
@@ -60,7 +59,7 @@ def main():
     print(f"Loaded checkpoint: {ckpt}")
     print(f"Device: {args.device}")
     print(f"Parameters: {total:,}")
-    print(f"wav_input_only={model.wav_input_only}, wav_frame_len={model.wav_frame_len}")
+    print(f"wav_frame_len={model.wav_frame_len}")
 
     if args.sample:
         # Keep this intentionally short: the full model is large, so this is a functional smoke only.

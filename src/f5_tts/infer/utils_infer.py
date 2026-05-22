@@ -49,9 +49,6 @@ tempfile_kwargs = {"delete_on_close": False} if sys.version_info >= (3, 12) else
 target_sample_rate = 16000  # WavTTS waveform default
 use_bfloat16 = True  # True, False
 wav_frame_len = 160
-hop_length = 160
-win_length = 1024
-n_fft = 1024
 target_rms = 0.1
 cross_fade_duration = 0.15
 ode_method = "euler"
@@ -210,9 +207,6 @@ def load_model(
 
     if waveform_kwargs is None:
         waveform_kwargs = dict(
-            n_fft=n_fft,
-            hop_length=hop_length,
-            win_length=win_length,
             wav_frame_len=wav_frame_len,
             target_sample_rate=target_sample_rate,
         )
@@ -234,7 +228,6 @@ def load_model(
 
     # Keep inference-time audio geometry available even when CFM is wav-only and has no MelSpec module.
     model.target_sample_rate = int(waveform_kwargs.get("target_sample_rate", target_sample_rate))
-    model.hop_length = int(waveform_kwargs.get("hop_length", hop_length))
 
     model = load_checkpoint(model, ckpt_path, device, dtype=None, use_ema=use_ema)
 

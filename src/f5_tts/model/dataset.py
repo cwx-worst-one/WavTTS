@@ -17,14 +17,12 @@ class CustomDataset(Dataset):
         custom_dataset: Dataset,
         durations=None,
         target_sample_rate=16_000,
-        hop_length=160,
         wav_frame_len: int = 160,
         **_,
     ):
         self.data = custom_dataset
         self.durations = durations
         self.target_sample_rate = target_sample_rate
-        self.hop_length = hop_length
         self.wav_frame_len = wav_frame_len
 
         self._resamplers = {}
@@ -33,8 +31,8 @@ class CustomDataset(Dataset):
         if (
             self.durations is not None
         ):  # Please make sure the separately provided durations are correct, otherwise 99.99% OOM
-            return self.durations[index] * self.target_sample_rate / self.hop_length
-        return self.data[index]["duration"] * self.target_sample_rate / self.hop_length
+            return self.durations[index] * self.target_sample_rate / self.wav_frame_len
+        return self.data[index]["duration"] * self.target_sample_rate / self.wav_frame_len
 
     def __len__(self):
         return len(self.data)

@@ -63,9 +63,8 @@ class CFM(nn.Module):
 
         self.frac_lengths_mask = frac_lengths_mask
         
-        # wav input
+        # waveform geometry
         waveform_kwargs = dict(waveform_kwargs)
-        self.wav_input_only = True
         self.mel_spec = None
         self.wav_frame_len = int(waveform_kwargs.pop("wav_frame_len", 160))
         self.num_channels = self.wav_frame_len
@@ -79,11 +78,8 @@ class CFM(nn.Module):
         self.transformer = transformer
         self.dim = transformer.dim
 
-        if hasattr(self.transformer, "set_wav_frontend_config"):
-            self.transformer.set_wav_frontend_config(
-                wav_input_only=self.wav_input_only,
-                wav_frame_len=self.wav_frame_len,
-            )
+        if hasattr(self.transformer, "set_wav_frame_len"):
+            self.transformer.set_wav_frame_len(self.wav_frame_len)
 
         # conditional flow related
         self.sigma = sigma
@@ -107,7 +103,7 @@ class CFM(nn.Module):
         # aux mel loss
         self.use_aux_mel_loss = use_aux_mel_loss
         self.aux_mel_loss_masked = aux_mel_loss_masked
-        if self.use_aux_mel_loss and self.wav_input_only:
+        if self.use_aux_mel_loss:
             self.aux_mel_loss = MelSpectrogramLoss(
                 sample_rate=sample_rate,
                 n_mels=[5, 10, 20, 40, 80, 160, 320],
@@ -123,11 +119,7 @@ class CFM(nn.Module):
 
         self.mask_align_to = 1
         alignments = []
-        if (
-            self.wav_input_only
-            and self.aux_mel_loss is not None
-            and hasattr(self.aux_mel_loss, "mel_transforms")
-        ):
+        if self.aux_mel_loss is not None and hasattr(self.aux_mel_loss, "mel_transforms"):
             hop_lengths = [int(m.hop_length) for m in self.aux_mel_loss.mel_transforms]
             if len(hop_lengths) > 0:
                 lcm_hop = hop_lengths[0]
@@ -232,7 +224,6 @@ class CFM(nn.Module):
         cond = cond.to(next(self.parameters()).dtype)
         cond = cond * self.latents_scale
 
-        wav_mode = True
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
         if not exists(lens):
             lens = torch.full((batch,), cond_seq_len, device=device, dtype=torch.long)

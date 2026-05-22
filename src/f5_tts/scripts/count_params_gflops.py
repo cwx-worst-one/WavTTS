@@ -25,9 +25,8 @@ transformer = DiT(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_la
 model = CFM(transformer=transformer)
 target_sample_rate = 16000
 wav_frame_len = 160
-hop_length = 160
 duration = 20
-frame_length = int(duration * target_sample_rate / hop_length)
+frame_length = int(duration * target_sample_rate / wav_frame_len)
 text_length = 150
 
 flops, params = thop.profile(

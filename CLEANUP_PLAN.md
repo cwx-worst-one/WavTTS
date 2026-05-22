@@ -106,7 +106,7 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 修正 `src/f5_tts/infer/utils_infer.py` wav-only 推理细节：
   - 默认 sample rate 改为 16k。
   - `no_vocoder` 直接返回 `None`。
-  - 从模型/config 读取 `target_sample_rate` 和 `hop_length`。
+  - 从模型/config 读取 `target_sample_rate`。
   - CUDA autocast 只在 CUDA 可用时启用。
   - wav-only 参考音频按 `wav_frame_len` 对齐。
 - [x] 在 `CFM` 中保存 `target_sample_rate`，方便 wav-only 推理获取音频几何信息。
@@ -116,6 +116,10 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
   - 训练、推理、eval batch、smoke 脚本改为读取 `model.waveform`。
 - [x] 清理主线 DiT 维度命名：`mel_dim` 参数改为 `wav_frame_len`，调用侧同步更新。
 - [x] 删除未使用的 legacy backbone：`UNetT`；`MMDiT` 与 modules 中对应实现先保留不动。
+- [x] 删除配置中的 `model.wav_input` 开关；WavTTS 主线已固定 wav-only。
+- [x] 删除模型内部 `wav_input_only` 状态；`DiT` / `CFM` 直接固定 raw waveform 输入。
+- [x] 删除 waveform config 中未使用的 `win_length` / `n_fft`，仅保留 `target_sample_rate` / `wav_frame_len`。
+- [x] 删除 waveform config 中的 `hop_length`，batch frame 估算统一使用 `wav_frame_len`。
 
 ---
 
@@ -296,7 +300,7 @@ python3 -m venv .venv
 #### WavTTS v0 主线建议保留
 
 ```text
-wav_input_only=True
+raw waveform only
 prediction=x_pred
 loss_space=v
 use_aux_mel_loss=True
@@ -453,7 +457,7 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 已固定为默认 reshape，并处理：
 
 - `src/f5_tts/model/cfm.py`：删除 `frontend_type` / `frontend_cfg` 参数和传递，只保留 `wav_frame_len`。
-- `src/f5_tts/model/backbones/dit.py`：删除 `conv` / `embed_v1` / `embed_v2` 分支，`set_wav_frontend_config` 只配置 reshape。
+- `src/f5_tts/model/backbones/dit.py`：删除 `conv` / `embed_v1` / `embed_v2` 分支，固定 reshape waveform tokenization。
 - 删除未再引用的 `src/f5_tts/model/backbones/wav_frontend.py` 与 `src/f5_tts/model/backbones/wav_patch_embed.py`。
 - 当前配置本身没有显式 frontend 字段，无需改 yaml。
 
@@ -465,7 +469,7 @@ f5-tts_infer-cli = "wavtts.infer.infer_cli:main"
 建议处理范围：
 
 1. `src/f5_tts/model/cfm.py`
-   - 固定 `wav_input_only=True`，删除非 wav 分支。
+   - 固定 `raw waveform only`，删除非 wav 分支。
    - 删除 `MelSpec` 构建、`self.mel_spec`、`vocoder` 参数和 vocoder decode。
    - 保留 `MelSpectrogramLoss`，因为它仍作为 waveform aux loss 使用。
 

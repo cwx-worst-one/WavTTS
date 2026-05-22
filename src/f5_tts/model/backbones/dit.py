@@ -326,9 +326,7 @@ class DiT(nn.Module):
 
         self.initialize_weights()
 
-        # wav front/back-end processing.
-        # default keeps mel path unchanged; CFM will configure this in wav-only mode.
-        self.wav_input_only = False
+        # raw waveform tokenization.
         self.wav_frame_len = wav_frame_len
 
     def initialize_weights(self):
@@ -356,15 +354,10 @@ class DiT(nn.Module):
         if self.proj_out_output_layer.bias is not None:
             nn.init.constant_(self.proj_out_output_layer.bias, 0)
 
-    def set_wav_frontend_config(
-        self,
-        wav_input_only: bool,
-        wav_frame_len: int,
-    ):
-        self.wav_input_only = bool(wav_input_only)
+    def set_wav_frame_len(self, wav_frame_len: int):
         self.wav_frame_len = int(wav_frame_len)
 
-        if self.wav_input_only and self.wav_frame_len != self.proj_out_dim:
+        if self.wav_frame_len != self.proj_out_dim:
             raise ValueError(
                 f"wav_frame_len ({self.wav_frame_len}) must equal proj_out_dim ({self.proj_out_dim}) "
                 "for reshape wav front-end."
@@ -468,17 +461,14 @@ class DiT(nn.Module):
         cache: bool = False,
         lens: int["b"] | None = None,
     ):
-        wav_mode = self.wav_input_only and x.ndim == 2
-        if self.wav_input_only and (x.ndim != cond.ndim):
-            raise ValueError(f"In wav_input_only mode, x and cond must have same ndim, got {x.ndim} and {cond.ndim}.")
+        if x.ndim != 2 or cond.ndim != 2:
+            raise ValueError(f"WavTTS DiT expects raw waveform x/cond [B, N], got {x.ndim}D and {cond.ndim}D.")
 
-        target_num_samples = None
-        if wav_mode:
-            target_num_samples = x.shape[1]
-            x, token_mask, token_lens = self._wav_to_tokens(x, mask=mask, lens=lens)
-            cond, _, _ = self._wav_to_tokens(cond, mask=None, lens=None)
-            mask = token_mask
-            lens = token_lens
+        target_num_samples = x.shape[1]
+        x, token_mask, token_lens = self._wav_to_tokens(x, mask=mask, lens=lens)
+        cond, _, _ = self._wav_to_tokens(cond, mask=None, lens=None)
+        mask = token_mask
+        lens = token_lens
 
         batch, seq_len = x.shape[0], x.shape[1]
         if time.ndim == 0:
@@ -520,7 +510,6 @@ class DiT(nn.Module):
         x = self.norm_out(x, t)
         output = self.proj_out(x)
 
-        if wav_mode:
-            output = self._tokens_to_wav(output, target_num_samples=target_num_samples)
+        output = self._tokens_to_wav(output, target_num_samples=target_num_samples)
 
         return output, None, None

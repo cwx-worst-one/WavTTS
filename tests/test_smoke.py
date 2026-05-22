@@ -16,7 +16,6 @@ def test_main_config_loads_waveform_training_baseline():
     )
     cfg = OmegaConf.load(config_path)
 
-    assert cfg.model.wav_input is True
     assert cfg.model.cfm.prediction == "x_pred"
     assert cfg.model.waveform.wav_frame_len == 160
 
@@ -38,9 +37,6 @@ def test_waveform_cfm_toy_model_initializes():
         transformer=transformer,
         waveform_kwargs={
             "target_sample_rate": 16000,
-            "hop_length": 8,
-            "win_length": 32,
-            "n_fft": 32,
             "wav_frame_len": 8,
         },
         vocab_char_map={" ": 0},
@@ -48,10 +44,8 @@ def test_waveform_cfm_toy_model_initializes():
         loss_space="v",
     )
 
-    assert model.wav_input_only is True
     assert model.wav_frame_len == 8
     assert model.num_channels == 8
-    assert model.transformer.wav_input_only is True
 
 
 if __name__ == "__main__":
