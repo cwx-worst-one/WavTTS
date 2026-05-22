@@ -92,7 +92,7 @@ class MMDiT(nn.Module):
         dim_head=64,
         dropout=0.1,
         ff_mult=4,
-        mel_dim=100,
+        wav_frame_len=100,
         text_num_embeds=256,
         text_mask_padding=True,
         qk_norm=None,
@@ -102,7 +102,7 @@ class MMDiT(nn.Module):
         self.time_embed = TimestepEmbedding(dim)
         self.text_embed = TextEmbedding(dim, text_num_embeds, mask_padding=text_mask_padding)
         self.text_cond, self.text_uncond = None, None  # text cache
-        self.audio_embed = AudioEmbedding(mel_dim, dim)
+        self.audio_embed = AudioEmbedding(wav_frame_len, dim)
 
         self.rotary_embed = RotaryEmbedding(dim_head)
 
@@ -124,7 +124,7 @@ class MMDiT(nn.Module):
             ]
         )
         self.norm_out = AdaLayerNorm_Final(dim)  # final modulation
-        self.proj_out = nn.Linear(dim, mel_dim)
+        self.proj_out = nn.Linear(dim, wav_frame_len)
 
         self.initialize_weights()
 
