@@ -128,6 +128,8 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 清理 `dit.py` 注释/局部变量和 `count_max_epoch.py` 中的 mel 命名残留。
 - [x] 删除 `CFM.self.mel_spec = None` 占位属性。
 - [x] 删除旧 `mel_spec.mel_stft.*` checkpoint key 兼容清理逻辑；当前 WavTTS checkpoint 不包含这些 key。
+- [x] 更新 `pyproject.toml` 发布元信息为 WavTTS，并新增 `wavtts_infer-cli` console script；旧 `f5-tts_infer-cli` 暂保留兼容。
+- [x] 删除 DiT 中未使用的 `audio_proj_type=conv_mlp` 和 `proj_out_type=final_conv/conv_mlp` 分支；输出投影固定为 linear。
 
 ---
 

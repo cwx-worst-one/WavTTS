@@ -16,7 +16,6 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from x_transformers.x_transformers import RotaryEmbedding
 
-from f5_tts.model.backbones.conv_mlp import ChannelLastConv1d, ConvMLP, ConvMLPOutProjection
 from f5_tts.model.modules import (
     AdaLayerNorm_Final,
     ConvNeXtV2Block,
@@ -127,66 +126,24 @@ class InputEmbedding(nn.Module):
         use_audio_proj: bool = False,
         audio_proj_dim: int | None = None,
         audio_proj_hidden: int | None = None,
-        audio_proj_type: str = "linear",  # "linear" | "conv_mlp"
-        audio_proj_conv_kernel_size: int = 7,
-        audio_proj_conv_padding: int = 3,
-        audio_proj_conv_multiple_of: int = 256,
     ):
         super().__init__()
 
         self.use_audio_proj = use_audio_proj
-        self.audio_proj_type = audio_proj_type
 
         if not use_audio_proj:
             self.proj = nn.Linear(wav_frame_len * 2 + text_dim, out_dim)
         else:
             audio_proj_dim = out_dim if audio_proj_dim is None else audio_proj_dim
-            if audio_proj_type == "linear":
-                audio_proj_hidden = audio_proj_dim if audio_proj_hidden is None else audio_proj_hidden
-                self.x_proj = nn.Sequential(
-                    nn.Linear(wav_frame_len, audio_proj_hidden, bias=False),
-                    nn.Linear(audio_proj_hidden, audio_proj_dim),
-                )
-                self.cond_proj = nn.Sequential(
-                    nn.Linear(wav_frame_len, audio_proj_hidden, bias=False),
-                    nn.Linear(audio_proj_hidden, audio_proj_dim),
-                )
-            elif audio_proj_type == "conv_mlp":
-                conv_hidden = audio_proj_dim * 4 if audio_proj_hidden is None else audio_proj_hidden
-                self.x_proj = nn.Sequential(
-                    ChannelLastConv1d(
-                        wav_frame_len,
-                        audio_proj_dim,
-                        kernel_size=audio_proj_conv_kernel_size,
-                        padding=audio_proj_conv_padding,
-                    ),
-                    nn.SELU(),
-                    ConvMLP(
-                        audio_proj_dim,
-                        conv_hidden,
-                        kernel_size=audio_proj_conv_kernel_size,
-                        padding=audio_proj_conv_padding,
-                        multiple_of=audio_proj_conv_multiple_of,
-                    ),
-                )
-                self.cond_proj = nn.Sequential(
-                    ChannelLastConv1d(
-                        wav_frame_len,
-                        audio_proj_dim,
-                        kernel_size=audio_proj_conv_kernel_size,
-                        padding=audio_proj_conv_padding,
-                    ),
-                    nn.SELU(),
-                    ConvMLP(
-                        audio_proj_dim,
-                        conv_hidden,
-                        kernel_size=audio_proj_conv_kernel_size,
-                        padding=audio_proj_conv_padding,
-                        multiple_of=audio_proj_conv_multiple_of,
-                    ),
-                )
-            else:
-                raise ValueError(f"Unknown audio_proj_type: {audio_proj_type}")
+            audio_proj_hidden = audio_proj_dim if audio_proj_hidden is None else audio_proj_hidden
+            self.x_proj = nn.Sequential(
+                nn.Linear(wav_frame_len, audio_proj_hidden, bias=False),
+                nn.Linear(audio_proj_hidden, audio_proj_dim),
+            )
+            self.cond_proj = nn.Sequential(
+                nn.Linear(wav_frame_len, audio_proj_hidden, bias=False),
+                nn.Linear(audio_proj_hidden, audio_proj_dim),
+            )
 
             self.fuse = nn.Linear(audio_proj_dim * 2 + text_dim, out_dim)
         self.conv_pos_embed = ConvPositionEmbedding(dim=out_dim)
@@ -243,15 +200,6 @@ class DiT(nn.Module):
         use_audio_proj: bool = False,
         audio_proj_dim: int | None = None,
         audio_proj_hidden: int | None = None,
-        audio_proj_type: str = "linear",  # "linear" | "conv_mlp"
-        audio_proj_conv_kernel_size: int = 7,
-        audio_proj_conv_padding: int = 3,
-        audio_proj_conv_multiple_of: int = 256,
-        proj_out_type: str = "linear",  # "linear" | "final_conv" | "conv_mlp"
-        proj_out_hidden: int | None = None,
-        proj_out_kernel_size: int = 7,
-        proj_out_padding: int = 3,
-        proj_out_multiple_of: int = 256,
     ):
         super().__init__()
 
@@ -271,10 +219,6 @@ class DiT(nn.Module):
             use_audio_proj=use_audio_proj,
             audio_proj_dim=audio_proj_dim,
             audio_proj_hidden=audio_proj_hidden,
-            audio_proj_type=audio_proj_type,
-            audio_proj_conv_kernel_size=audio_proj_conv_kernel_size,
-            audio_proj_conv_padding=audio_proj_conv_padding,
-            audio_proj_conv_multiple_of=audio_proj_conv_multiple_of,
         )
 
         self.rotary_embed = RotaryEmbedding(dim_head)
@@ -302,24 +246,8 @@ class DiT(nn.Module):
 
         self.norm_out = AdaLayerNorm_Final(dim)  # final modulation
         self.proj_out_dim = wav_frame_len
-        if proj_out_type == "linear":
-            self.proj_out = nn.Linear(dim, wav_frame_len)
-            self.proj_out_output_layer = self.proj_out
-        elif proj_out_type == "final_conv":
-            self.proj_out = ChannelLastConv1d(dim, wav_frame_len, kernel_size=proj_out_kernel_size, padding=proj_out_padding)
-            self.proj_out_output_layer = self.proj_out
-        elif proj_out_type == "conv_mlp":
-            self.proj_out = ConvMLPOutProjection(
-                dim,
-                wav_frame_len,
-                hidden_dim=proj_out_hidden,
-                kernel_size=proj_out_kernel_size,
-                padding=proj_out_padding,
-                multiple_of=proj_out_multiple_of,
-            )
-            self.proj_out_output_layer = self.proj_out.output_layer
-        else:
-            raise ValueError(f"Unknown proj_out_type: {proj_out_type}")
+        self.proj_out = nn.Linear(dim, wav_frame_len)
+        self.proj_out_output_layer = self.proj_out
 
         self.checkpoint_activations = checkpoint_activations
 

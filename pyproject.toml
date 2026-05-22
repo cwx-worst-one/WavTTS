@@ -3,9 +3,9 @@ requires = ["setuptools >= 61.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "f5-tts"
+name = "wavtts"
 version = "1.1.10"
-description = "F5-TTS: A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching"
+description = "WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling"
 readme = "README.md"
 license = {text = "MIT License"}
 classifiers = [
@@ -63,7 +63,8 @@ eval = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/SWivid/F5-TTS"
+Homepage = "https://github.com/cwx-worst-one/WavTTS"
 
 [project.scripts]
+"wavtts_infer-cli" = "f5_tts.infer.infer_cli:main"
 "f5-tts_infer-cli" = "f5_tts.infer.infer_cli:main"
