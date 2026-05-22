@@ -28,7 +28,7 @@ target_rms=0.1
 use_ema=true                # true, false
 LOAD_DTYPE="fp32"
 INFER_DTYPE="bf16"
-MEL_SPEC_TYPE="no_vocoder"
+OUTPUT_TAG="wav"
 RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/F5_TTS_Wav_mel_dev/results/F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1
 # GPUS="[0,1,2,3,4,5,6,7]"
 GPUS="[0,1,2,3]"
@@ -38,7 +38,7 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"        # data/LibriSpeech/test-
 LOCAL=""
 
 output_dir=${RESULTS_ROOT}/${ckpt_step}
-gen_wav_subdir=seed${seed}_euler_nfe${nfe_step}_${MEL_SPEC_TYPE}
+gen_wav_subdir=seed${seed}_euler_nfe${nfe_step}_${OUTPUT_TAG}
 if [[ "${timestep_mapping}" == "uniform" ]]; then
     gen_wav_subdir+="_uniform"
 fi
@@ -51,7 +51,7 @@ fi
 if [[ "${shift}" != "1.0" ]]; then
     gen_wav_subdir+="_shift${shift}"
 fi
-gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_target_rms${target_rms}"   # _vocos_ss, _no_vocoder_ss, _speed1.0_load-fp32_infer-bf16, _speed1.0
+gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_target_rms${target_rms}"
 
 if [[ "${use_ema}" == "false" ]]; then
     gen_wav_subdir+="_no_ema"

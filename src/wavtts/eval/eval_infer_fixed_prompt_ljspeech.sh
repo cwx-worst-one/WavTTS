@@ -9,9 +9,9 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 # export CUDA_VISIBLE_DEVICES="0"
 
 # Configuration parameters. Keep this block aligned with eval_infer_batch.sh.
-MODEL_NAME=F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1
+MODEL_NAME=WavTTS_scale_8_16k
 RESULT_MODEL_NAME="${MODEL_NAME}"
-MEL_SPEC_TYPE="no_vocoder"  # no_vocoder, vocos
+OUTPUT_TAG="wav"
 SEEDS=(0)
 CKPTSTEPS=(1500000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1600000
 TASKS=("ljspeech_inset_test_9s")
@@ -192,7 +192,7 @@ make_output_dir() {
         return
     fi
 
-    local gen_wav_dir="${OUTPUT_ROOT}/seed${seed}_${ode_method}_nfe${nfe_step}_${MEL_SPEC_TYPE}"
+    local gen_wav_dir="${OUTPUT_ROOT}/seed${seed}_${ode_method}_nfe${nfe_step}_${OUTPUT_TAG}"
     if [ "${timestep_mapping}" = "uniform" ]; then
         gen_wav_dir+="_uniform"
     fi
