@@ -18,19 +18,19 @@
 
 ## Introduction
 
-WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space. By bypassing traditional intermediate representations—such as mel-spectrograms, VAE latents, or codec tokens—WavTTS significantly simplifies the synthesis pipeline. Powered by flow matching with DiT, it combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-fidelity waveform generation. 
+WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space. It removes the need for intermediate representations such as mel-spectrograms, VAE latents, or codec tokens, resulting in a simpler synthesis pipeline. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling for high-fidelity waveform generation.
 
 <div align="center">
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
-  <br>
-  <!-- <sub>Figure 1: Overview of the WavTTS raw-waveform generation pipeline.</sub> -->
 </div>
 
 For more details, please refer to our paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
 
+**Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For more detailed guidance, please refer to the original repository; the sections below summarize the main WavTTS usage workflows.
+
 ## Installation
 
-We recommend using Conda to manage your environment.
+We recommend using Conda to manage the environment.
 
 ```bash
 # 1. Clone the repository
@@ -50,46 +50,41 @@ pip install -e .
 
 ## Model Checkpoints
 
-We provide the official WavTTS checkpoint on Hugging Face: TODO. It uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml` and supports 16 kHz zero-shot TTS inference with `wavtts_infer-cli`.
+We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). It uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml` and supports 16 kHz zero-shot TTS inference.
 
-If you use a locally downloaded checkpoint, pass its path explicitly through the inference configuration or CLI options.
 
 ## Inference
 
-The primary supported inference interface is the command-line tool:
+### CLI Inference
 
 ```bash
-wavtts_infer-cli --model WavTTS_scale_8_16k \
+wavtts_infer-cli --model WavTTS_scale_9_16k \
   --ref_audio "provide_prompt_wav_path_here.wav" \
   --ref_text "The content, subtitle, or transcription of the reference audio." \
   --gen_text "The text you want WavTTS to synthesize."
 ```
 
-You can also run the default example or provide a custom TOML file:
+You can also run inference with the default settings or a TOML config:
 
 ```bash
-# Run with default settings.
 wavtts_infer-cli
-
-# Run with the included basic example.
 wavtts_infer-cli -c src/wavtts/infer/examples/basic/basic.toml
-
-# Run with your own configuration.
 wavtts_infer-cli -c custom.toml
 ```
 
-For available flags, run:
+### Inference with Scripts
+
+For single-sample inference, edit the paths and text in `src/wavtts/infer/debug_infer.sh`, then run:
 
 ```bash
-wavtts_infer-cli --help
+bash src/wavtts/infer/debug_infer.sh
 ```
 
-Inference notes:
+For batch inference, edit the checkpoint, task, and dataset paths in `src/wavtts/eval/eval_infer_batch.sh`, then run:
 
-- Use a clean reference audio clip. Short prompt audio with a small amount of trailing silence usually works best.
-- Provide `--ref_text` when possible. Leaving it empty may require an ASR model and extra GPU memory, depending on the inference path.
-- Use punctuation and spaces in `--gen_text` to make intended pauses explicit.
-- If generated audio is blank or silent, first check FFmpeg and checkpoint paths.
+```bash
+bash src/wavtts/eval/eval_infer_batch.sh --infer-only
+```
 
 ## Training
 
@@ -102,24 +97,9 @@ Dataset preparation scripts are provided under `src/wavtts/train/datasets/`. Dow
 ```bash
 # Prepare Emilia.
 python src/wavtts/train/datasets/prepare_emilia.py
-
-# Prepare WenetSpeech4TTS.
-python src/wavtts/train/datasets/prepare_wenetspeech4tts.py
-
-# Prepare LibriTTS.
-python src/wavtts/train/datasets/prepare_libritts.py
-
-# Prepare LJSpeech.
-python src/wavtts/train/datasets/prepare_ljspeech.py
 ```
 
-For custom data described by a metadata CSV, use:
-
-```bash
-python src/wavtts/train/datasets/prepare_csv_wavs.py
-```
-
-TODO: document the expected metadata format and dataset directory layout for WavTTS release training.
+More dataset preparation details, including other datasets and custom data, are available in `src/wavtts/train/datasets/README.md`.
 
 ### 2. Choose a config
 
@@ -151,7 +131,7 @@ The retained LibriTTS launcher is:
 bash src/wavtts/train/run_train_libritts.sh
 ```
 
-The launcher scripts define their default values near the top of each file. Edit those values directly, or launch `train.py` with Hydra overrides for one-off changes. Example:
+The launcher scripts define their default values near the top of each file. Edit those values directly, or launch `train.py` with Hydra overrides for one-off changes:
 
 ```bash
 accelerate launch \
@@ -187,7 +167,7 @@ accelerate config
 bash src/wavtts/eval/eval_infer_batch.sh --infer-only
 ```
 
-To run batch inference together with the corresponding evaluation pipeline:
+To run batch inference together with the evaluation pipeline:
 
 ```bash
 bash src/wavtts/eval/eval_infer_batch.sh
@@ -211,23 +191,16 @@ See `src/wavtts/eval/README.md` for dataset preparation and evaluation checkpoin
 
 ## Acknowledgements
 
-WavTTS is developed from the F5-TTS codebase. We thank the authors and contributors of the following projects and resources:
+WavTTS is built upon the awesome [F5-TTS](https://github.com/SWivid/F5-TTS). We also refer to the implementations of [DAC](https://github.com/descriptinc/descript-audio-codec) and [JiT](https://github.com/LTH14/JiT). We sincerely thank the authors for their valuable open-source contributions.
 
-- [F5-TTS](https://github.com/SWivid/F5-TTS) for the original flow-matching TTS framework.
-- [E2-TTS](https://arxiv.org/abs/2406.18009) for the simple and effective TTS formulation.
-- [Emilia](https://arxiv.org/abs/2407.05361), [WenetSpeech4TTS](https://arxiv.org/abs/2406.05763), [LibriTTS](https://arxiv.org/abs/1904.02882), and [LJSpeech](https://keithito.com/LJ-Speech-Dataset/) for valuable datasets.
-- [lucidrains](https://github.com/lucidrains) and [bfs18](https://github.com/bfs18) for the initial CFM structure and discussions.
-- [SD3](https://arxiv.org/abs/2403.03206) and [Hugging Face diffusers](https://github.com/huggingface/diffusers) for DiT and MMDiT code structure references.
-- [torchdiffeq](https://github.com/rtqichen/torchdiffeq), [Vocos](https://huggingface.co/charactr/vocos-mel-24khz), and [BigVGAN](https://github.com/NVIDIA/BigVGAN) for related audio generation tooling.
-- [FunASR](https://github.com/modelscope/FunASR), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [UniSpeech](https://github.com/microsoft/UniSpeech), and [SpeechMOS](https://github.com/tarepan/SpeechMOS) for evaluation tools.
-- [ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner) for speech editing evaluation support.
+If you encounter any issues, we recommend first checking the [F5-TTS issue tracker](https://github.com/SWivid/F5-TTS/issues), where many common questions may have already been discussed or resolved.
 
 ## Citation
 
-TODO: add the WavTTS paper citation.
+If you find this work useful in your research, please consider citing:
 
 ```bibtex
-@article{todo2026wavtts,
+@article{chen2026wavtts,
   title={WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling},
   author={TODO},
   journal={TODO},
@@ -237,6 +210,4 @@ TODO: add the WavTTS paper citation.
 
 ## License
 
-The code is released under the MIT License. Pre-trained model licensing should follow the licenses of the training data and released checkpoints.
-
-TODO: confirm the final license statement for public WavTTS checkpoints.
+The codebase of this repository is released under the MIT License. Due to the license restrictions of the Emilia training data, our pre-trained models are released under the CC BY-NC 4.0 license.
