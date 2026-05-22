@@ -53,7 +53,6 @@ def main():
 
     assert model.wav_frame_len == int(cfg.model.waveform.wav_frame_len)
     assert model.num_channels == int(cfg.model.waveform.wav_frame_len)
-    assert model.mel_spec is None
 
     total = sum(p.numel() for p in model.parameters())
     print(f"Loaded checkpoint: {ckpt}")

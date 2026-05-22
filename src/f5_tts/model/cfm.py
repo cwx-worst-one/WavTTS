@@ -65,7 +65,6 @@ class CFM(nn.Module):
         
         # waveform geometry
         waveform_kwargs = dict(waveform_kwargs)
-        self.mel_spec = None
         self.wav_frame_len = int(waveform_kwargs.pop("wav_frame_len", 160))
         self.num_channels = self.wav_frame_len
 

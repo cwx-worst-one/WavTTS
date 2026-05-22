@@ -126,6 +126,8 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 清理主线 eval shell 中残留的 F5-TTS/vocoder 提示文本；真实历史 checkpoint 路径暂保留。
 - [x] 清理 eval/infer/CFM 中低风险 mel 命名残留：batch eval 变量改为 wav，推理临时变量和 raw waveform 注释同步更新。
 - [x] 清理 `dit.py` 注释/局部变量和 `count_max_epoch.py` 中的 mel 命名残留。
+- [x] 删除 `CFM.self.mel_spec = None` 占位属性。
+- [x] 删除旧 `mel_spec.mel_stft.*` checkpoint key 兼容清理逻辑；当前 WavTTS checkpoint 不包含这些 key。
 
 ---
 

@@ -260,11 +260,6 @@ class Trainer:
             print(f"Checkpoint file: {latest_checkpoint}")
             print("=" * 80)
 
-        # patch for backward compatibility, 305e3ea
-        for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
-            if key in checkpoint["ema_model_state_dict"]:
-                del checkpoint["ema_model_state_dict"][key]
-
         if self.is_main:
             self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
 
@@ -274,13 +269,8 @@ class Trainer:
                 checkpoint["update"] = checkpoint["step"] // self.grad_accumulation_steps
                 if self.grad_accumulation_steps > 1 and self.is_main:
                     print(
-                        "F5-TTS WARNING: Loading checkpoint saved with per_steps logic (before f992c4e), will convert to per_updates according to grad_accumulation_steps setting, may have unexpected behaviour."
+                        "WavTTS WARNING: Loading checkpoint saved with per_steps logic (before f992c4e), will convert to per_updates according to grad_accumulation_steps setting, may have unexpected behaviour."
                     )
-            # patch for backward compatibility, 305e3ea
-            for key in ["mel_spec.mel_stft.mel_scale.fb", "mel_spec.mel_stft.spectrogram.window"]:
-                if key in checkpoint["model_state_dict"]:
-                    del checkpoint["model_state_dict"][key]
-
             self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             if self.scheduler:

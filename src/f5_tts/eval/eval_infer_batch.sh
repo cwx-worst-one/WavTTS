@@ -5,9 +5,7 @@ export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
 export HF_ENDPOINT=https://hf-mirror.com
 export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
-# export CUDA_VISIBLE_DEVICES="1,2,3,4,5,6,7"
-# export CUDA_VISIBLE_DEVICES="0,1,2,3"
-# export CUDA_VISIBLE_DEVICES="1"
+# export CUDA_VISIBLE_DEVICES="0"
 
 # Configuration parameters
 MODEL_NAME=WavTTS_scale_9_16k
@@ -38,7 +36,7 @@ shift="2.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 
-DEBUG=false  # true, false
+DEBUG=true  # true, false
 
 # Parse arguments
 INFER_ONLY=true  # true, false
