@@ -32,7 +32,7 @@ from f5_tts.infer.utils_infer import (
 
 parser = argparse.ArgumentParser(
     prog="python3 infer-cli.py",
-    description="Commandline interface for E2/F5 TTS with Advanced Batch Processing.",
+    description="Commandline interface for WavTTS waveform inference.",
     epilog="Specify options above to override one or more settings from config.",
 )
 parser.add_argument(
@@ -50,19 +50,19 @@ parser.add_argument(
     "-m",
     "--model",
     type=str,
-    help="The model name: F5TTS_v1_Base | F5TTS_Base | E2TTS_Base | etc.",
+    help="The model config name under src/f5_tts/configs, used only when --model_cfg is not provided.",
 )
 parser.add_argument(
     "-mc",
     "--model_cfg",
     type=str,
-    help="The path to F5-TTS model config file .yaml",
+    help="The path to WavTTS model config file .yaml",
 )
 parser.add_argument(
     "-p",
     "--ckpt_file",
     type=str,
-    help="The path to model checkpoint .pt, leave blank to use default",
+    help="The path or cached_path URI to model checkpoint. Required for WavTTS inference.",
 )
 parser.add_argument(
     "-v",
@@ -171,7 +171,7 @@ config = tomli.load(open(args.config, "rb"))
 
 # command-line interface parameters
 
-model = args.model or config.get("model", "F5TTS_v1_Base")
+model = args.model or config.get("model", "WavTTS_scale_8_16k")
 ckpt_file = args.ckpt_file or config.get("ckpt_file", "")
 vocab_file = args.vocab_file or config.get("vocab_file", "")
 
@@ -245,17 +245,14 @@ model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
 model_arc = model_cfg.model.arch
 cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
 
-repo_name, ckpt_step, ckpt_type = "F5-TTS", 1250000, "safetensors"
-
-# override for previous models
-if model == "E2TTS_Base":
-    repo_name = "E2-TTS"
-    ckpt_step = 1200000
-
 if not ckpt_file:
-    ckpt_file = str(cached_path(f"hf://SWivid/{repo_name}/{model}/model_{ckpt_step}.{ckpt_type}"))
+    raise ValueError("--ckpt_file is required for WavTTS inference. It can be a local path or cached_path URI such as hf://...")
 
-print(f"Using {model}...")
+# Keep a future HF/cache interface without falling back to legacy F5/E2 defaults.
+if ckpt_file.startswith(("hf://", "http://", "https://")):
+    ckpt_file = str(cached_path(ckpt_file))
+
+print(f"Using config {model_cfg.model.name} with checkpoint {ckpt_file}...")
 ema_model = load_model(
     model_cls,
     model_arc,

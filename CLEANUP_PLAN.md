@@ -120,6 +120,9 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 删除模型内部 `wav_input_only` 状态；`DiT` / `CFM` 直接固定 raw waveform 输入。
 - [x] 删除 waveform config 中未使用的 `win_length` / `n_fft`，仅保留 `target_sample_rate` / `wav_frame_len`。
 - [x] 删除 waveform config 中的 `hop_length`，batch frame 估算统一使用 `wav_frame_len`。
+- [x] 清理 `infer_cli.py` 旧 F5/E2 checkpoint fallback：WavTTS 推理必须显式提供 `--ckpt_file`，但保留 `hf://` / URL cached_path 接口。
+- [x] 更新 infer example toml 默认模型为 `WavTTS_scale_8_16k`，并显式保留 `ckpt_file` 占位。
+- [x] 将 WavTTS configs 中的 `model.name` 从 `F5TTS_v1_Large_wav` 改为 `WavTTS_Large`。
 
 ---
 

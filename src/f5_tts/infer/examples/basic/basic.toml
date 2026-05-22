@@ -1,5 +1,7 @@
-# F5TTS_v1_Base | E2TTS_Base
-model = "F5TTS_v1_Base"
+# WavTTS config name or provide model_cfg explicitly
+model = "WavTTS_scale_8_16k"
+# Required: local path or cached_path URI, e.g. hf://...
+ckpt_file = ""
 ref_audio = "infer/examples/basic/basic_ref_en.wav"
 # If an empty "", transcribes the reference audio automatically.
 ref_text = "Some call me nature, others call me mother nature."

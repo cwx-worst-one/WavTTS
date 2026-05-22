@@ -18,7 +18,7 @@ optim:
   bnb_optimizer: False  # use bnb 8bit AdamW optimizer or not
 
 model:
-  name: F5TTS_v1_Large_wav  # model name
+  name: WavTTS_Large  # model name
   tokenizer: char  # tokenizer type
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
