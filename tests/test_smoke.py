@@ -3,15 +3,17 @@ from pathlib import Path
 
 def test_import_package():
     import f5_tts
+    import wavtts
 
     assert f5_tts.__doc__ == "WavTTS package."
+    assert wavtts.__doc__ == "WavTTS package."
 
 
 def test_main_config_loads_waveform_training_baseline():
     from omegaconf import OmegaConf
 
     config_path = Path(
-        "src/f5_tts/configs/"
+        "src/wavtts/configs/"
         "WavTTS_scale_9_16k.yaml"
     )
     cfg = OmegaConf.load(config_path)
@@ -21,7 +23,7 @@ def test_main_config_loads_waveform_training_baseline():
 
 
 def test_waveform_cfm_toy_model_initializes():
-    from f5_tts.model import CFM, DiT
+    from wavtts.model import CFM, DiT
 
     transformer = DiT(
         dim=16,

@@ -8,7 +8,7 @@ import torch
 from hydra.utils import get_class
 from omegaconf import OmegaConf
 
-from f5_tts.infer.utils_infer import load_model
+from wavtts.infer.utils_infer import load_model
 
 
 DEFAULT_CKPT = (
@@ -16,7 +16,7 @@ DEFAULT_CKPT = (
     "F5TTS_v1_Large_wav_x_pred_scale_8_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-"
     "emilia-8gpus-19200sample_per_gpu-bf16/ckpts/model_1000000.pt"
 )
-DEFAULT_CONFIG = "src/f5_tts/configs/WavTTS_scale_8_16k.yaml"
+DEFAULT_CONFIG = "src/wavtts/configs/WavTTS_scale_8_16k.yaml"
 DEFAULT_VOCAB = "data/Emilia_ZH_EN_pinyin/vocab.txt"
 
 
@@ -38,7 +38,7 @@ def main():
             raise FileNotFoundError(path)
 
     cfg = OmegaConf.load(config)
-    model_cls = get_class(f"f5_tts.model.{cfg.model.backbone}")
+    model_cls = get_class(f"wavtts.model.{cfg.model.backbone}")
     cfm_kwargs = getattr(cfg.model, "cfm", {}) or {}
 
     model = load_model(

@@ -66,5 +66,5 @@ eval = [
 Homepage = "https://github.com/cwx-worst-one/WavTTS"
 
 [project.scripts]
-"wavtts_infer-cli" = "f5_tts.infer.infer_cli:main"
+"wavtts_infer-cli" = "wavtts.infer.infer_cli:main"
 "f5-tts_infer-cli" = "f5_tts.infer.infer_cli:main"

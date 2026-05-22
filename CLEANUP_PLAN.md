@@ -7,7 +7,7 @@
 ## 当前原则
 
 - 先保持可运行，再继续删除和改名。
-- `f5_tts` 包名暂时保留，避免一次性破坏 import、checkpoint 和配置加载。
+- `src/wavtts` 已作为新包目录引入；`src/f5_tts` 暂时保留兼容，避免一次性破坏历史脚本、import 和配置加载。
 - `F5TTS` / `E2TTS` 等旧模型命名残留暂缓分类处理，但训练/推理主线优先使用 `WavTTS_*` 配置名。
 - README / train README / infer README 等文档后续统一重写，避免清理过程中反复改同一批说明。
 - `LICENSE`、citation、acknowledgement 后续单独整理，不能直接删除原 F5-TTS 合规信息。
@@ -133,12 +133,15 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 清理推理采样分支：ODE 固定 Euler，删除 Heun 特殊路径；删除 inference `logistic_normal` timestep mapping。
 - [x] 删除 `cfg_scale_interval` 推理开关；CFG 在 `cfg_strength > 0` 时全程生效。
 - [x] 清理旧 fixed-prompt/LS eval shell 中已废弃的 Heun/logistic-normal 参数，并删除 eval batch 的隐藏兼容参数。
+- [x] 新增 `src/wavtts/` 包目录作为 WavTTS 主入口镜像，内部 import / 脚本路径已迁到 `wavtts` / `src/wavtts`。
+- [x] `src/f5_tts/` 暂时保留为 legacy 兼容目录。
+- [x] baseline 增加 `wavtts` import、compile 和新目录脚本语法检查。
 
 ---
 
 ## 暂不处理
 
-- `f5_tts` 包名迁移暂缓。
+- `src/wavtts` 新包目录已开始迁移；`src/f5_tts` 暂时保留兼容，后续验证充分后再删除或降级为兼容层。
 - checkpoint 兼容策略暂缓最终决定。
 - `eval/` 暂时保留，不做大删。
 - `api.py` / socket / finetune / speech_edit 入口已从主线删除。
@@ -159,17 +162,20 @@ bash scripts/check_baseline.sh
 ```bash
 PYTHONPATH=src .venv/bin/python tests/test_smoke.py
 PYTHONPATH=src .venv/bin/python tests/test_waveform_dataset_collate.py
-PYTHONPATH=src .venv/bin/python -m compileall -q tests src/f5_tts
+PYTHONPATH=src .venv/bin/python -m compileall -q tests src/f5_tts src/wavtts
 bash -n src/f5_tts/train/run_main_train.sh
 bash -n src/f5_tts/train/run_train_libritts.sh
 bash -n src/f5_tts/infer/debug_infer.sh
+bash -n src/wavtts/train/run_main_train.sh
+bash -n src/wavtts/train/run_train_libritts.sh
+bash -n src/wavtts/infer/debug_infer.sh
 ```
 
 如改动 CLI / import / 推理依赖，额外运行：
 
 ```bash
-PYTHONPATH=src .venv/bin/python src/f5_tts/infer/infer_cli.py --help
-PYTHONPATH=src .venv/bin/python -c "import f5_tts.infer.utils_infer; print('ok')"
+PYTHONPATH=src .venv/bin/python src/wavtts/infer/infer_cli.py --help
+PYTHONPATH=src .venv/bin/python -c "import wavtts.infer.utils_infer; print('ok')"
 ```
 
 真实 checkpoint 加载验证：
@@ -181,7 +187,7 @@ PYTHONPATH=src .venv/bin/python scripts/smoke_load_wavtts_checkpoint.py
 真实推理验证：
 
 ```bash
-bash src/f5_tts/infer/debug_infer.sh
+bash src/wavtts/infer/debug_infer.sh
 ```
 
 ---

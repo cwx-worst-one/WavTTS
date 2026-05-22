@@ -15,8 +15,11 @@ echo "[baseline] PYTHONPATH: ${PYTHONPATH}"
 
 "${PYTHON_BIN}" tests/test_smoke.py
 "${PYTHON_BIN}" tests/test_waveform_dataset_collate.py
-"${PYTHON_BIN}" -m compileall -q tests src/f5_tts
+"${PYTHON_BIN}" -m compileall -q tests src/f5_tts src/wavtts
 bash -n src/f5_tts/train/run_main_train.sh
 bash -n src/f5_tts/train/run_train_libritts.sh
+bash -n src/wavtts/train/run_main_train.sh
+bash -n src/wavtts/train/run_train_libritts.sh
+bash -n src/wavtts/infer/debug_infer.sh
 
 echo "[baseline] OK"

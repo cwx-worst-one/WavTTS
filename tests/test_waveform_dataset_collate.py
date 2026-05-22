@@ -1,6 +1,6 @@
 import torch
 
-from f5_tts.model.dataset import collate_fn
+from wavtts.model.dataset import collate_fn
 
 
 def test_collate_fn_pads_waveform_only_batches():
