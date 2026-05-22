@@ -132,6 +132,7 @@ src/f5_tts/configs/WavTTS_scale_8_16k.yaml
 - [x] 删除 DiT 中未使用的 `audio_proj_type=conv_mlp` 和 `proj_out_type=final_conv/conv_mlp` 分支；输出投影固定为 linear。
 - [x] 清理推理采样分支：ODE 固定 Euler，删除 Heun 特殊路径；删除 inference `logistic_normal` timestep mapping。
 - [x] 删除 `cfg_scale_interval` 推理开关；CFG 在 `cfg_strength > 0` 时全程生效。
+- [x] 清理旧 fixed-prompt/LS eval shell 中已废弃的 Heun/logistic-normal 参数，并删除 eval batch 的隐藏兼容参数。
 
 ---
 

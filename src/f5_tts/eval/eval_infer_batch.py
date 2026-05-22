@@ -49,8 +49,6 @@ def main():
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
     parser.add_argument("--timestep_mapping", default="sway_sampling", choices=["uniform", "sway_sampling", "power"])
     parser.add_argument("--timestep_power", default=None, type=float)
-    parser.add_argument("--timestep_logistic_normal_loc", default=None, type=float, help=argparse.SUPPRESS)
-    parser.add_argument("--timestep_logistic_normal_scale", default=None, type=float, help=argparse.SUPPRESS)
     parser.add_argument("--shift", default=1.0, type=float)
 
     parser.add_argument("-t", "--testset", required=True)

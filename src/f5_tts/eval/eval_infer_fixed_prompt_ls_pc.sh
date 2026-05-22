@@ -35,12 +35,10 @@ OUTPUT_DIR=""
 
 cfg_strength=3.0
 nfe_step=50         # 16, 32, 50
-ode_method="euler"  # euler, heun
-timestep_mapping="power"   # uniform, sway_sampling, power, logistic_normal
+ode_method="euler"
+timestep_mapping="power"   # uniform, sway_sampling, power
 swaysampling=-1
 timestep_power=2.0
-timestep_logistic_normal_loc=-0.8
-timestep_logistic_normal_scale=0.8
 shift="7.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
@@ -95,14 +93,6 @@ while [[ $# -gt 0 ]]; do
             timestep_power="$2"
             shift 2
             ;;
-        --timestep-logistic-normal-loc)
-            timestep_logistic_normal_loc="$2"
-            shift 2
-            ;;
-        --timestep-logistic-normal-scale)
-            timestep_logistic_normal_scale="$2"
-            shift 2
-            ;;
         --shift)
             shift="$2"
             shift 2
@@ -119,10 +109,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ode_method" in
-    euler|heun)
+    euler)
         ;;
     *)
-        echo "======== Invalid ode method: ${ode_method}. Expected one of: euler, heun"
+        echo "======== Invalid ode method: ${ode_method}. Expected: euler"
         exit 1
         ;;
 esac
@@ -167,10 +157,6 @@ RESULT_EXPNAME="${RESULT_MODEL_NAME}${RESULT_EXP_SUFFIX}"
 if [ "${timestep_mapping}" = "power" ]; then
     echo "======== Timestep power: ${timestep_power}"
 fi
-if [ "${timestep_mapping}" = "logistic_normal" ]; then
-    echo "======== Timestep logistic normal loc: ${timestep_logistic_normal_loc}"
-    echo "======== Timestep logistic normal scale: ${timestep_logistic_normal_scale}"
-fi
 if [ "${shift}" != "1.0" ]; then
     echo "======== Shift: ${shift}"
 fi
@@ -193,9 +179,6 @@ make_output_dir() {
     fi
     if [ "${timestep_mapping}" = "power" ]; then
         gen_wav_dir+="_power${timestep_power}"
-    fi
-    if [ "${timestep_mapping}" = "logistic_normal" ]; then
-        gen_wav_dir+="_lnloc${timestep_logistic_normal_loc}_lnscale${timestep_logistic_normal_scale}"
     fi
     if [ "${shift}" != "1.0" ]; then
         gen_wav_dir+="_shift${shift}"
@@ -222,14 +205,14 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         for task in "${TASKS[@]}"; do
             GEN_WAV_DIR=$(make_output_dir ${seed} "${OUTPUT_DIR}")
             echo ">>>>>>>> Output dir: ${GEN_WAV_DIR}"
-            echo ">>>>>>>> Executing fixed-prompt infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} -p \"${LS_TEST_CLEAN_PATH}\" ${LOCAL} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --output_dir \"${GEN_WAV_DIR}\" --fixed_prompt_wav \"${FIXED_PROMPT_WAV}\" --fixed_prompt_text \"${FIXED_PROMPT_TEXT}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
+            echo ">>>>>>>> Executing fixed-prompt infer task: accelerate launch src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} -p \"${LS_TEST_CLEAN_PATH}\" ${LOCAL} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --output_dir \"${GEN_WAV_DIR}\" --fixed_prompt_wav \"${FIXED_PROMPT_WAV}\" --fixed_prompt_text \"${FIXED_PROMPT_TEXT}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
 
             if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                accelerate launch --main_process_port ${MASTER_PORT} src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
 
             if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --timestep_logistic_normal_loc ${timestep_logistic_normal_loc} --timestep_logistic_normal_scale ${timestep_logistic_normal_scale} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
+                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/f5_tts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" ${LOCAL} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --output_dir "${GEN_WAV_DIR}" --fixed_prompt_wav "${FIXED_PROMPT_WAV}" --fixed_prompt_text "${FIXED_PROMPT_TEXT}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
             fi
         done
 
