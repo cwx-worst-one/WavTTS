@@ -11,14 +11,14 @@
   </p>
 
   <p align="center">
-    <i>An exploration of end-to-end zero-shot TTS directly in the raw waveform space.</i>
+    <i>End-to-end zero-shot TTS directly in the raw waveform space.</i>
   </p>
 
 </div>
 
 ## Introduction
 
-WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space. It removes the need for intermediate representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling for high-fidelity waveform generation.
+WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space, without relying on intermediate acoustic representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-fidelity waveform generation.
 
 <div align="center">
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
@@ -50,7 +50,7 @@ pip install -e .
 
 ## Model Checkpoints
 
-We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). It uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml` and supports 16 kHz zero-shot TTS inference.
+We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). The released checkpoint uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml` and supports 16 kHz zero-shot TTS inference.
 
 
 ## Inference
