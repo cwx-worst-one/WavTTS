@@ -5,7 +5,7 @@
 
   <p align="center">
     <a href="#installation"><img src="https://img.shields.io/badge/Python-3.10-brightgreen.svg?logo=python&logoColor=white" alt="Python"></a>
-    <a href="#"><img src="https://img.shields.io/badge/arXiv-2605.xxxxx-blueviolet.svg?logo=arxiv&logoColor=white" alt="arXiv"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Arxiv-2605.xxxxx-b31b1b.svg?logo=arXiv" alt="arXiv"></a>
     <a href="#"><img src="https://img.shields.io/badge/🌐%20Demo-Page-orange.svg" alt="Demo"></a>
     <a href="#model-checkpoints"><img src="https://img.shields.io/badge/🤗%20HuggingFace-Models-yellow.svg" alt="HuggingFace"></a>
   </p>
