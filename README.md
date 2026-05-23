@@ -24,7 +24,7 @@ WavTTS is an end-to-end zero-shot TTS framework that generates speech directly i
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
 </div>
 
-For more details, please refer to paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
+You can find details in the paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
 
 **Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For more detailed guidance, please refer to the original repository; the sections below summarize the main WavTTS usage workflows.
 
