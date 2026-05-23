@@ -17,7 +17,7 @@ eval_metric=("wer sim utmos")
 
 # langs=("zh" "en")        # "en" "zh" "zh_hard"
 langs=("en")
-ckpt_steps=(600000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+ckpt_steps=(800000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 seed=0
 nfe_step=50         # 32, 50, 100
 ode_method="euler"
@@ -25,7 +25,7 @@ cfg_strength=3.0
 timestep_mapping="power"    # uniform, power, sway_sampling
 swaysampling=-1.0
 timestep_power=2.0
-shift="2.0"
+shift="3.0"
 target_rms=0.1
 use_ema=true                # true, false
 LOAD_DTYPE="fp32"

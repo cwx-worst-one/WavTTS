@@ -12,7 +12,7 @@ MODEL_NAME=WavTTS_scale_9_16k
 RESULT_MODEL_NAME="${MODEL_NAME}"
 # SEEDS=(0 1 2)
 SEEDS=(0)
-CKPTSTEPS=(600000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+CKPTSTEPS=(800000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 # TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
 # TASKS=("seedtts_test_zh" "seedtts_test_en")
 TASKS=("seedtts_test_en")
@@ -28,7 +28,7 @@ ode_method="euler"
 timestep_mapping="power"   # uniform, sway_sampling, power
 swaysampling=-1
 timestep_power=2.0
-shift="2.0"         # 1.0, 7.0
+shift="3.0"         # 1.0, 7.0
 LOAD_DTYPE="fp32"   # bf16, fp16, fp32
 INFER_DTYPE="bf16"  # bf16, fp16, fp32
 

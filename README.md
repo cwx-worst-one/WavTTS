@@ -42,7 +42,7 @@ conda create -n wavtts python=3.10
 conda activate wavtts
 
 # 3. Install PyTorch >= 2.2.0 with CUDA support, e.g.,
-pip install torch==2.9.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 
 # 4. Install WavTTS in editable mode
 pip install -e .
