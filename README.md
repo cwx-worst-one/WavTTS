@@ -26,7 +26,7 @@ WavTTS is an end-to-end zero-shot TTS framework that generates speech directly i
 
 You can find details in the paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
 
-**Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For more detailed guidance, please refer to the original repository; the sections below summarize the main WavTTS usage workflows.
+**Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For general usage guidance, please refer to the original repository. The following sections summarize the main WavTTS usage workflows.
 
 ## Installation
 
@@ -191,7 +191,7 @@ See `src/wavtts/eval/README.md` for dataset preparation and evaluation checkpoin
 
 ## Acknowledgements
 
-WavTTS is built upon the awesome [F5-TTS](https://github.com/SWivid/F5-TTS). We also refer to the implementations of [DAC](https://github.com/descriptinc/descript-audio-codec) and [JiT](https://github.com/LTH14/JiT). We sincerely thank the authors for their valuable open-source contributions.
+WavTTS is built upon the awesome [F5-TTS](https://github.com/SWivid/F5-TTS) codebase. with references to the implementations of [DAC](https://github.com/descriptinc/descript-audio-codec) and [JiT](https://github.com/LTH14/JiT). We sincerely thank the authors for their valuable open-source contributions.
 
 If you encounter any issues, we recommend first checking the [F5-TTS issue tracker](https://github.com/SWivid/F5-TTS/issues), where many common questions may have already been discussed or resolved.
 
