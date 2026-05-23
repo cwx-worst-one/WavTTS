@@ -18,13 +18,13 @@
 
 ## Introduction
 
-WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space. It removes the need for intermediate representations such as mel-spectrograms, VAE latents, or codec tokens, resulting in a simpler synthesis pipeline. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling for high-fidelity waveform generation.
+WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space. It removes the need for intermediate representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling for high-fidelity waveform generation.
 
 <div align="center">
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
 </div>
 
-For more details, please refer to our paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
+For more details, please refer to paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
 
 **Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For more detailed guidance, please refer to the original repository; the sections below summarize the main WavTTS usage workflows.
 
