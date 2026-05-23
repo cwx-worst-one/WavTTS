@@ -1,177 +1,63 @@
 # Inference
 
-The pretrained model checkpoints can be reached at [🤗 Hugging Face](https://huggingface.co/SWivid/F5-TTS) and [🤖 Model Scope](https://www.modelscope.cn/models/SWivid/F5-TTS_Emilia-ZH-EN), or will be automatically downloaded when running inference scripts.
-
-**More checkpoints with whole community efforts can be found in [SHARED.md](SHARED.md), supporting more languages.**
-
-Currently support **30s for a single** generation, which is the **total length** (same logic if `fix_duration`) including both prompt and output audio. However, `infer_cli` and `infer_gradio` will automatically do chunk generation for longer text. Long reference audio will be **clip short to ~12s**.
-
-To avoid possible inference failures, make sure you have seen through the following instructions.
-
-- Use reference audio <12s and leave proper silence space (e.g. 1s) at the end. Otherwise there is a risk of truncating in the middle of word, leading to suboptimal generation.
-- <ins>Uppercased letters</ins> (best with form like K.F.C.) will be uttered letter by letter, and lowercased letters used for common words. 
-- Add some spaces (blank: " ") or punctuations (e.g. "," ".") <ins>to explicitly introduce some pauses</ins>.
-- If English punctuation marks the end of a sentence, make sure there is a space " " after it. Otherwise not regarded as when chunk.
-- <ins>Preprocess numbers</ins> to Chinese letters if you want to have them read in Chinese, otherwise in English.
-- If the generation output is blank (pure silence), <ins>check for FFmpeg installation</ins>.
-- Try <ins>turn off `use_ema` if using an early-stage</ins> finetuned checkpoint (which goes just few updates).
-
-
-## Gradio App
-
-Currently supported features:
-
-- Basic TTS with Chunk Inference
-- Multi-Style / Multi-Speaker Generation
-- Voice Chat powered by Qwen2.5-3B-Instruct
-- [Custom inference with more language support](SHARED.md)
-
-The cli command `wavtts_infer-gradio` equals to `python src/wavtts/infer/infer_gradio.py`, which launches a Gradio APP (web interface) for inference.
-
-The script will load model checkpoints from Huggingface. You can also manually download files and update the path to `load_model()` in `infer_gradio.py`. Currently only load TTS models first, will load ASR model to do transcription if `ref_text` not provided, will load LLM model if use Voice Chat.
-
-More flags options:
-
-```bash
-# Automatically launch the interface in the default web browser
-wavtts_infer-gradio --inbrowser
-
-# Set the root path of the application, if it's not served from the root ("/") of the domain
-# For example, if the application is served at "https://example.com/myapp"
-wavtts_infer-gradio --root_path "/myapp"
-```
-
-Could also be used as a component for larger application:
-```python
-import gradio as gr
-from wavtts.infer.infer_gradio import app
-
-with gr.Blocks() as main_app:
-    gr.Markdown("# This is an example of using F5-TTS within a bigger Gradio app")
-
-    # ... other Gradio components
-
-    app.render()
-
-main_app.launch()
-```
-
+WavTTS provides command-line inference for zero-shot TTS from a reference audio prompt. Use a reference audio shorter than about 12 seconds and keep a short silence at the end to avoid truncating the prompt mid-word.
 
 ## CLI Inference
 
-The cli command `wavtts_infer-cli` equals to `python src/wavtts/infer/infer_cli.py`, which is a command line tool for inference.
+Run the provided example config:
 
-The script will load model checkpoints from Huggingface. You can also manually download files and use `--ckpt_file` to specify the model you want to load, or directly update in `infer_cli.py`.
-
-For change vocab.txt use `--vocab_file` to provide your `vocab.txt` file.
-
-Basically you can inference with flags:
 ```bash
-# Leave --ref_text "" will have ASR model transcribe (extra GPU memory usage)
+wavtts_infer-cli -c src/wavtts/infer/examples/basic.toml
+```
+
+Or pass the main options directly:
+
+```bash
 wavtts_infer-cli \
---model F5TTS_v1_Base \
---ref_audio "ref_audio.wav" \
---ref_text "The content, subtitle or transcription of reference audio." \
---gen_text "Some text you want TTS model generate for you."
-
-# Use BigVGAN as vocoder. Currently only support F5TTS_Base. 
-wavtts_infer-cli --model F5TTS_Base --vocoder_name bigvgan --load_vocoder_from_local
-
-# Use custom path checkpoint, e.g.
-wavtts_infer-cli --ckpt_file ckpts/F5TTS_v1_Base/model_1250000.safetensors
-
-# More instructions
-wavtts_infer-cli --help
+  --model WavTTS_scale_9_16k \
+  --ckpt_file /path/to/model.pt \
+  --vocab_file infer/examples/vocab.txt \
+  --ref_audio infer/examples/basic_ref_en.wav \
+  --ref_text "Some call me nature, others call me mother nature." \
+  --gen_text "The text you want WavTTS to synthesize."
 ```
 
-And a `.toml` file would help with more flexible usage.
+Use `--model_cfg` instead of `--model` when you want to provide an explicit YAML model config path. Use `--ckpt_file` with a local checkpoint path or a `cached_path` URI.
 
-```bash
-wavtts_infer-cli -c custom.toml
-```
+## TOML Config
 
-For example, you can use `.toml` to pass in variables, refer to `src/wavtts/infer/examples/basic/basic.toml`:
+A `.toml` file stores the same runtime options accepted by `wavtts_infer-cli`, such as checkpoint path, vocabulary path, reference prompt, generated text, output path, and sampling settings. The example config is `src/wavtts/infer/examples/basic.toml`; `custom.toml` in examples means a user-created config file.
 
 ```toml
-# F5TTS_v1_Base | E2TTS_Base
-model = "F5TTS_v1_Base"
-ref_audio = "infer/examples/basic/basic_ref_en.wav"
-# If an empty "", transcribes the reference audio automatically.
+model = "WavTTS_scale_9_16k"
+ckpt_file = "/path/to/model.pt"
+vocab_file = "infer/examples/vocab.txt"
+ref_audio = "infer/examples/basic_ref_en.wav"
 ref_text = "Some call me nature, others call me mother nature."
-gen_text = "I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring."
-# File with text to generate. Ignores the text above.
-gen_file = ""
+gen_text = "The text you want WavTTS to synthesize."
+output_dir = "output"
+output_file = "infer_cli_basic.wav"
 remove_silence = false
-output_dir = "tests"
+
+nfe_step = 32
+cfg_strength = 2.0
+sway_sampling_coef = -1.0
+timestep_mapping = "power"
+timestep_power = 2.0
+shift = 3.0
+speed = 1.0
 ```
 
-You can also leverage `.toml` file to do multi-style generation, refer to `src/wavtts/infer/examples/multi/story.toml`.
+## Script-based Inference
 
-```toml
-# F5TTS_v1_Base | E2TTS_Base
-model = "F5TTS_v1_Base"
-ref_audio = "infer/examples/multi/main.flac"
-# If an empty "", transcribes the reference audio automatically.
-ref_text = ""
-gen_text = ""
-# File with text to generate. Ignores the text above.
-gen_file = "infer/examples/multi/story.txt"
-remove_silence = true
-output_dir = "tests"
-
-[voices.town]
-ref_audio = "infer/examples/multi/town.flac"
-ref_text = ""
-
-[voices.country]
-ref_audio = "infer/examples/multi/country.flac"
-ref_text = ""
-```
-You should mark the voice with `[main]` `[town]` `[country]` whenever you want to change voice, refer to `src/wavtts/infer/examples/multi/story.txt`.
-
-## API Usage
-
-```python
-from importlib.resources import files
-from wavtts.api import F5TTS
-
-f5tts = F5TTS()
-wav, sr, spec = f5tts.infer(
-    ref_file=str(files("wavtts").joinpath("infer/examples/basic/basic_ref_en.wav")),
-    ref_text="some call me nature, others call me mother nature.",
-    gen_text="""I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring. Respect me and I'll nurture you; ignore me and you shall face the consequences.""",
-    file_wave=str(files("wavtts").joinpath("../../tests/api_out.wav")),
-    file_spec=str(files("wavtts").joinpath("../../tests/api_out.png")),
-    seed=None,
-)
-```
-Check [api.py](../api.py) for more details.
-
-## TensorRT-LLM Deployment
-
-See [detailed instructions](../runtime/triton_trtllm/README.md) for more information.
-
-## Socket Real-time Service
-
-Real-time voice output with chunk stream:
+For single-sample inference, edit paths and text in `src/wavtts/infer/infer.sh`, then run:
 
 ```bash
-# Start socket server
-python src/wavtts/socket_server.py
-
-# If PyAudio not installed
-sudo apt-get install portaudio19-dev
-pip install pyaudio
-
-# Communicate with socket client
-python src/wavtts/socket_client.py
+bash src/wavtts/infer/infer.sh
 ```
 
-## Speech Editing
-
-To test speech editing capabilities, use the following command:
+For batch inference, edit checkpoint, task, and dataset paths in `src/wavtts/eval/eval_infer_batch.sh`, then run:
 
 ```bash
-python src/wavtts/infer/speech_edit.py
+bash src/wavtts/eval/eval_infer_batch.sh --infer-only
 ```
-

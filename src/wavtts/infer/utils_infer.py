@@ -55,6 +55,9 @@ ode_method = "euler"  # fixed WavTTS inference ODE method
 nfe_step = 32  # 16, 32
 cfg_strength = 2.0
 sway_sampling_coef = -1.0
+timestep_mapping = "power"
+timestep_power = 2.0
+shift = 3.0
 speed = 1.0
 fix_duration = None
 
@@ -346,6 +349,9 @@ def infer_process(
     nfe_step=nfe_step,
     cfg_strength=cfg_strength,
     sway_sampling_coef=sway_sampling_coef,
+    timestep_mapping=timestep_mapping,
+    timestep_power=timestep_power,
+    shift=shift,
     speed=speed,
     fix_duration=fix_duration,
     device=device,
@@ -371,6 +377,9 @@ def infer_process(
             nfe_step=nfe_step,
             cfg_strength=cfg_strength,
             sway_sampling_coef=sway_sampling_coef,
+            timestep_mapping=timestep_mapping,
+            timestep_power=timestep_power,
+            shift=shift,
             speed=speed,
             fix_duration=fix_duration,
             device=device,
@@ -402,6 +411,9 @@ def infer_batch_process(
     nfe_step=32,
     cfg_strength=2.0,
     sway_sampling_coef=-1,
+    timestep_mapping="power",
+    timestep_power=2.0,
+    shift=3.0,
     speed=1,
     fix_duration=None,
     device=None,
@@ -468,6 +480,10 @@ def infer_batch_process(
                         steps=nfe_step,
                         cfg_strength=cfg_strength,
                         sway_sampling_coef=sway_sampling_coef,
+                        timestep_mapping=timestep_mapping,
+                        timestep_power=timestep_power,
+                        shift=shift,
+                        use_epss=timestep_mapping == "sway_sampling",
                     )
             else:
                 generated, _ = model_obj.sample(
@@ -477,6 +493,10 @@ def infer_batch_process(
                     steps=nfe_step,
                     cfg_strength=cfg_strength,
                     sway_sampling_coef=sway_sampling_coef,
+                    timestep_mapping=timestep_mapping,
+                    timestep_power=timestep_power,
+                    shift=shift,
+                    use_epss=timestep_mapping == "sway_sampling",
                 )
             del _
 

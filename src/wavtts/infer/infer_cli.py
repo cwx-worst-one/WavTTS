@@ -27,6 +27,9 @@ from wavtts.infer.utils_infer import (
     speed,
     sway_sampling_coef,
     target_rms,
+    shift,
+    timestep_mapping,
+    timestep_power,
 )
 
 
@@ -39,8 +42,8 @@ parser.add_argument(
     "-c",
     "--config",
     type=str,
-    default=os.path.join(files("wavtts").joinpath("infer/examples/basic"), "basic.toml"),
-    help="The configuration file, default see infer/examples/basic/basic.toml",
+    default=os.path.join(files("wavtts").joinpath("infer/examples"), "basic.toml"),
+    help="The configuration file, default see infer/examples/basic.toml",
 )
 
 
@@ -147,6 +150,22 @@ parser.add_argument(
     help=f"Sway Sampling coefficient, default {sway_sampling_coef}",
 )
 parser.add_argument(
+    "--timestep_mapping",
+    type=str,
+    choices=["uniform", "sway_sampling", "power"],
+    help=f"Timestep mapping strategy, default {timestep_mapping}",
+)
+parser.add_argument(
+    "--timestep_power",
+    type=float,
+    help=f"Power exponent when --timestep_mapping power is used, default {timestep_power}",
+)
+parser.add_argument(
+    "--shift",
+    type=float,
+    help=f"Timestep shift value, default {shift}",
+)
+parser.add_argument(
     "--speed",
     type=float,
     help=f"The speed of the generated audio, default {speed}",
@@ -175,7 +194,7 @@ model = args.model or config.get("model", "WavTTS_scale_8_16k")
 ckpt_file = args.ckpt_file or config.get("ckpt_file", "")
 vocab_file = args.vocab_file or config.get("vocab_file", "")
 
-ref_audio = args.ref_audio or config.get("ref_audio", "infer/examples/basic/basic_ref_en.wav")
+ref_audio = args.ref_audio or config.get("ref_audio", "infer/examples/basic_ref_en.wav")
 ref_text = (
     args.ref_text
     if args.ref_text is not None
@@ -202,6 +221,11 @@ cross_fade_duration = args.cross_fade_duration or config.get("cross_fade_duratio
 nfe_step = args.nfe_step or config.get("nfe_step", nfe_step)
 cfg_strength = args.cfg_strength or config.get("cfg_strength", cfg_strength)
 sway_sampling_coef = args.sway_sampling_coef or config.get("sway_sampling_coef", sway_sampling_coef)
+timestep_mapping = args.timestep_mapping or config.get("timestep_mapping", timestep_mapping)
+timestep_power = args.timestep_power if args.timestep_power is not None else config.get("timestep_power", timestep_power)
+shift = args.shift if args.shift is not None else config.get("shift", shift)
+if timestep_mapping == "power" and timestep_power is None:
+    raise ValueError("--timestep_power must be provided when --timestep_mapping power is used")
 speed = args.speed or config.get("speed", speed)
 fix_duration = args.fix_duration or config.get("fix_duration", fix_duration)
 device = args.device or config.get("device", device)
@@ -210,6 +234,8 @@ device = args.device or config.get("device", device)
 # patches for pip pkg user
 if "infer/examples/" in ref_audio:
     ref_audio = str(files("wavtts").joinpath(f"{ref_audio}"))
+if "infer/examples/" in vocab_file:
+    vocab_file = str(files("wavtts").joinpath(f"{vocab_file}"))
 if "infer/examples/" in gen_file:
     gen_file = str(files("wavtts").joinpath(f"{gen_file}"))
 if "voices" in config:
@@ -314,6 +340,9 @@ def main():
             nfe_step=nfe_step,
             cfg_strength=cfg_strength,
             sway_sampling_coef=sway_sampling_coef,
+            timestep_mapping=timestep_mapping,
+            timestep_power=timestep_power,
+            shift=shift,
             speed=local_speed,
             fix_duration=fix_duration,
             device=device,

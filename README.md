@@ -55,32 +55,39 @@ We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). The 
 
 ## Inference
 
+WavTTS supports both command-line inference and script-based inference.
+
 ### CLI Inference
+
+To synthesize speech from a reference audio prompt, run:
 
 ```bash
 wavtts_infer-cli --model WavTTS_scale_9_16k \
+  --ckpt_file "/path/to/model.pt" \
   --ref_audio "provide_prompt_wav_path_here.wav" \
   --ref_text "The content, subtitle, or transcription of the reference audio." \
   --gen_text "The text you want WavTTS to synthesize."
 ```
 
-You can also run inference with the default settings or a TOML config:
+You can also run inference with a TOML configuration file:
 
 ```bash
-wavtts_infer-cli
-wavtts_infer-cli -c src/wavtts/infer/examples/basic/basic.toml
+# Use the provided example config
+wavtts_infer-cli -c src/wavtts/infer/examples/basic.toml
+
+# Use your own custom config
 wavtts_infer-cli -c custom.toml
 ```
 
-### Inference with Scripts
+### Script-based Inference
 
-For single-sample inference, edit the paths and text in `src/wavtts/infer/debug_infer.sh`, then run:
+For single-sample inference, edit the paths and text in `src/wavtts/infer/infer.sh`, then run:
 
 ```bash
-bash src/wavtts/infer/debug_infer.sh
+bash src/wavtts/infer/infer.sh
 ```
 
-For batch inference, edit the checkpoint, task, and dataset paths in `src/wavtts/eval/eval_infer_batch.sh`, then run:
+For batch inference, edit the checkpoint path, task name, and dataset paths in `src/wavtts/eval/eval_infer_batch.sh`, then run:
 
 ```bash
 bash src/wavtts/eval/eval_infer_batch.sh --infer-only

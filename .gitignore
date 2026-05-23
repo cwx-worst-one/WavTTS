@@ -77,6 +77,8 @@ __pycache__
 *.bin
 *.txt
 !doc/*.txt
+!src/wavtts/infer/examples/*.wav
+!src/wavtts/infer/examples/vocab.txt
 
 # logs
 /**/cruise_logs
@@ -126,7 +128,6 @@ libs/
 generated_output/
 pypetrel.1.0.0.129/
 bm_inference.pstats
-infer.sh
 recipes/bigmusic/tests/data/
 recipes/leadsheet
 .attach_*
