@@ -10,12 +10,9 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 # Configuration parameters
 MODEL_NAME=WavTTS_scale_9_16k
 RESULT_MODEL_NAME="${MODEL_NAME}"
-# SEEDS=(0 1 2)
 SEEDS=(0)
 CKPTSTEPS=(800000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
-# TASKS=("seedtts_test_zh" "seedtts_test_en" "ls_pc_test_clean")
-# TASKS=("seedtts_test_zh" "seedtts_test_en")
-TASKS=("seedtts_test_en")
+TASKS=("seedtts_test_en") # seedtts_test_zh, seedtts_test_en, ls_pc_test_clean
 LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
 TRAIN_GPU_TAG="8gpus"   # 8gpus, 16gpus, 32gpus

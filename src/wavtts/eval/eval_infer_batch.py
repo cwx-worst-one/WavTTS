@@ -44,12 +44,12 @@ def main():
     parser.add_argument("-n", "--expname", required=True)
     parser.add_argument("-c", "--ckptstep", default=1250000, type=int)
 
-    parser.add_argument("-nfe", "--nfe_step", default=32, type=int)
+    parser.add_argument("-nfe", "--nfe_step", default=50, type=int)
     parser.add_argument("-o", "--odemethod", default="euler", choices=["euler"], help="ODE method is fixed to euler.")
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
-    parser.add_argument("--timestep_mapping", default="sway_sampling", choices=["uniform", "sway_sampling", "power"])
-    parser.add_argument("--timestep_power", default=None, type=float)
-    parser.add_argument("--shift", default=1.0, type=float)
+    parser.add_argument("--timestep_mapping", default="power", choices=["uniform", "sway_sampling", "power"])
+    parser.add_argument("--timestep_power", default=2.0, type=float)
+    parser.add_argument("--shift", default=3.0, type=float)
 
     parser.add_argument("-t", "--testset", required=True)
     parser.add_argument(
@@ -93,7 +93,7 @@ def main():
         type=str,
         help="Optional result directory name override. Defaults to --expname.",
     )
-    parser.add_argument("--cfg_strength", default=2.0, type=float)
+    parser.add_argument("--cfg_strength", default=3.0, type=float)
     parser.add_argument(
         "--infer_x_pred_clip",
         default=None,

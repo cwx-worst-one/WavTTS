@@ -81,21 +81,15 @@ wavtts_infer-cli -c custom.toml
 
 ### Script-based Inference
 
-For single-sample inference, edit the paths and text in `src/wavtts/infer/infer.sh`, then run:
+To run single-sample inference with the script, modify the paths and text in `src/wavtts/infer/infer.sh`, then execute:
 
 ```bash
 bash src/wavtts/infer/infer.sh
 ```
 
-For batch inference, edit the checkpoint path, task name, and dataset paths in `src/wavtts/eval/eval_infer_batch.sh`, then run:
-
-```bash
-bash src/wavtts/eval/eval_infer_batch.sh --infer-only
-```
-
 ## Training
 
-Training is the main supported workflow in this repository.
+The training workflow mainly includes preparing training-data metadata and running the main training process.
 
 ### 1. Prepare data
 
@@ -108,25 +102,9 @@ python src/wavtts/train/datasets/prepare_emilia.py
 
 More dataset preparation details, including other datasets and custom data, are available in `src/wavtts/train/datasets/README.md`.
 
-### 2. Choose a config
+### 2. Start training
 
-The current primary training config is:
-
-```text
-src/wavtts/configs/WavTTS_scale_9_16k.yaml
-```
-
-Other retained configs:
-
-```text
-src/wavtts/configs/WavTTS_scale_8_16k.yaml
-src/wavtts/configs/WavTTS_scale_10_16k.yaml
-src/wavtts/configs/WavTTS_scale_8_16k_libritts.yaml
-```
-
-### 3. Start training
-
-Use the main launcher for the current WavTTS baseline:
+Use the main launcher for `WavTTS_scale_9_16k`:
 
 ```bash
 bash src/wavtts/train/run_main_train.sh

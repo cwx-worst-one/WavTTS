@@ -13,9 +13,8 @@ output_dir = "output"
 output_file = "infer_cli_basic.wav"
 remove_silence = false
 
-nfe_step = 32
-cfg_strength = 2.0
-sway_sampling_coef = -1.0
+nfe_step = 50
+cfg_strength = 3.0
 timestep_mapping = "power"
 timestep_power = 2.0
 shift = 3.0
