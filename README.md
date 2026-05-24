@@ -94,46 +94,35 @@ bash src/wavtts/infer/infer.sh
 We use [Emilia](https://huggingface.co/datasets/amphion/Emilia-Dataset) as the training dataset in our main experiments. After downloading the dataset, update the corresponding paths in the preparation script and run:
 
 ```bash
-# Prepare Emilia.
+# Prepare training metadata for the Emilia dataset.
 python src/wavtts/train/datasets/prepare_emilia.py
 ```
 
-Other data preparation scripts are available under `src/wavtts/train/datasets/`.  For custom datasets, please adapt the dataset loading logic in `src/wavtts/model/dataset.py`.
+Data preparation scripts for other datasets, such as LibriTTS, are also available under `src/wavtts/train/datasets/`. To train WavTTS on a custom dataset, please adapt the dataset loading logic in `src/wavtts/model/dataset.py`.
 
 ### Launching Training
 
-Use the main launcher for `WavTTS_scale_9_16k`:
+WavTTS can be trained directly with Accelerate:
+
+```bash
+# Configure Accelerate, e.g., multi-GPU DDP with mixed precision.
+accelerate config
+
+# Launch training with a config file; Config files are located under src/wavtts/configs/.
+accelerate launch src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml
+
+# Accelerate and Hydra options can be overridden from the command line.
+accelerate launch --mixed_precision=bf16 src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml ++datasets.batch_size_per_gpu=19200
+```
+
+Alternatively, you can use the launcher script for the main WavTTS experiments:
 
 ```bash
 bash src/wavtts/train/run_main_train.sh
 ```
 
-The retained LibriTTS launcher is:
+This is the script used for our main experiments. Please edit the default values near the top of the script according to your environment.
 
-```bash
-bash src/wavtts/train/run_train_libritts.sh
-```
-
-The launcher scripts define their default values near the top of each file. Edit those values directly, or launch `train.py` with Hydra overrides for one-off changes:
-
-```bash
-accelerate launch \
-  --num_processes 8 \
-  --mixed_precision bf16 \
-  src/wavtts/train/train.py \
-  --config-name WavTTS_scale_9_16k.yaml \
-  ++datasets.batch_size_per_gpu=19200 \
-  ++hydra.run.dir=./exp/nar_wav_tts
-```
-
-You can also launch training directly with Accelerate:
-
-```bash
-accelerate config
-accelerate launch src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml
-```
-
-More training details are available in `src/wavtts/train/README.md`.
 
 ## Evaluation
 
