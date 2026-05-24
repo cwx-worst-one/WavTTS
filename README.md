@@ -89,20 +89,18 @@ bash src/wavtts/infer/infer.sh
 
 ## Training
 
-The training workflow mainly includes preparing training-data metadata and running the main training process.
+### Data Preparation
 
-### 1. Prepare data
-
-Dataset preparation scripts are provided under `src/wavtts/train/datasets/`. Download the corresponding dataset first and update paths as needed.
+We use [Emilia](https://huggingface.co/datasets/amphion/Emilia-Dataset) as the training dataset in our main experiments. After downloading the dataset, update the corresponding paths in the preparation script and run:
 
 ```bash
 # Prepare Emilia.
 python src/wavtts/train/datasets/prepare_emilia.py
 ```
 
-More dataset preparation details, including other datasets and custom data, are available in `src/wavtts/train/datasets/README.md`.
+Other data preparation scripts are available under `src/wavtts/train/datasets/`.  For custom datasets, please adapt the dataset loading logic in `src/wavtts/model/dataset.py`.
 
-### 2. Start training
+### Launching Training
 
 Use the main launcher for `WavTTS_scale_9_16k`:
 
