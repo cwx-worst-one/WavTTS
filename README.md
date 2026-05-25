@@ -109,6 +109,7 @@ WavTTS can be trained directly with `accelerate`:
 accelerate config
 
 # Step 2: Launch training using a Hydra config
+# YAML configuration files are located under the src/wavtts/configs/ directory.
 accelerate launch src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml
 
 # Example with inline overrides:

@@ -1,18 +1,20 @@
-# WavTTS config name or provide model_cfg explicitly
+# Model and checkpoint
 model = "WavTTS_scale_9_16k"
-# Optional: leave empty to download the default WavTTS checkpoint from Hugging Face.
-ckpt_file = ""
+ckpt_file = ""  # Leave empty to download the default Hugging Face checkpoint.
 vocab_file = "infer/examples/vocab.txt"
+
+# Reference prompt and generation text
 ref_audio = "infer/examples/basic_ref_en.wav"
-# If an empty "", transcribes the reference audio automatically.
 ref_text = "Some call me nature, others call me mother nature."
 gen_text = "I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring."
-# File with text to generate. Ignores the text above.
-gen_file = ""
+gen_file = ""  # If set, this file is used instead of gen_text.
+
+# Output
 output_dir = "output"
 output_file = "infer_cli_basic.wav"
 remove_silence = false
 
+# Sampling
 nfe_step = 50
 cfg_strength = 3.0
 timestep_mapping = "power"

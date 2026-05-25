@@ -14,7 +14,7 @@ The pretrained checkpoint is available on [🤗 Hugging Face](https://huggingfac
 
 CLI inference can be run either with direct arguments or with a TOML configuration file. Command-line arguments always override values defined in the TOML config.
 
-### Option A: Direct Arguments
+### A. Direct Arguments
 
 Run inference by passing the required arguments directly:
 
@@ -27,7 +27,7 @@ wavtts_infer-cli \
 ```
 *(Optional: Use `--model_cfg` instead of `--model` to provide an explicit YAML model config path.)*
 
-### Option B: TOML Configuration
+### B. TOML Configuration
 
 For reproducible runs, we recommend storing inference settings in a `.toml` file. If no config is provided, `wavtts_infer-cli` uses the default example config at `src/wavtts/infer/examples/basic.toml`.
 
