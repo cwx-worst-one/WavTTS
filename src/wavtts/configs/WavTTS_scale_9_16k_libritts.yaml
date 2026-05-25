@@ -24,7 +24,7 @@ model:
   backbone: DiT
   cfm:
     prediction: x_pred         # flow | x_pred
-    loss_space: v         # flow | v   (x_pred 模式下一般用 v)
+    loss_space: v         # flow | v   (v is typical for x_pred mode)
     t_sampling: logistic_normal      # uniform | logistic_normal
     P_mean: -0.8
     P_std: 0.8

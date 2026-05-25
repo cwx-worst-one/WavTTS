@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# 环境变量（可按需修改）
+# Environment variables; adjust as needed.
 export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
 export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721

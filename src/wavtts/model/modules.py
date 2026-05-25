@@ -735,11 +735,6 @@ class MelSpectrogramLoss(nn.Module):
             
         total_loss = x_pred.new_tensor(0.0)
 
-        # FIXME: 如果不更新梯度，则 uncomment 下面的代码
-        # if self.training:
-        #     # Break exact-zero outputs so mel/STFT loss can propagate gradients at startup.
-        #     x_pred = x_pred + torch.randn_like(x_pred) * 1e-7
-
         use_mask = frame_mask is not None
         if use_mask:
             span_starts, span_ends = self._get_span_bounds_from_mask(frame_mask, frame_lengths)
@@ -778,9 +773,6 @@ class MelSpectrogramLoss(nn.Module):
             
             # Log Magnitude Loss
             # Formula: L1( log10(x^pow + eps), log10(y^pow + eps) )
-            # FIXME: 如果梯度不更新，则 uncomment 下面的代码
-            # x_log = (x_mels + self.clamp_eps).pow(self.pow).log10()
-            # y_log = (y_mels + self.clamp_eps).pow(self.pow).log10()
             x_log = x_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
             y_log = y_mels.clamp(min=self.clamp_eps).pow(self.pow).log10()
 
