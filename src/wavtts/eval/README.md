@@ -1,63 +1,67 @@
-
 # Evaluation
 
-Install packages for evaluation:
+## 1. Installation
+
+First, install the optional evaluation dependencies from the WavTTS root directory:
 
 ```bash
 pip install -e .[eval]
 ```
 
-## Generating Samples for Evaluation
+## 2. Prepare Evaluation Models
 
-### Prepare Test Datasets
-
-1. *Seed-TTS testset*: Download from [seed-tts-eval](https://github.com/BytedanceSpeech/seed-tts-eval).
-2. *LibriSpeech test-clean*: Download from [OpenSLR](http://www.openslr.org/12/).
-3. Unzip the downloaded datasets and place them in the `data/` directory.
-4. Our filtered LibriSpeech-PC 4-10s subset: `data/librispeech_pc_test_clean_cross_sentence.lst`
-
-### Batch Inference for Test Set
-
-To run batch inference for evaluations, execute the following commands:
-
-```bash
-# if not setup accelerate config yet
-accelerate config
-
-# if only perform inference
-bash src/wavtts/eval/eval_infer_batch.sh --infer-only
-
-# if inference and with corresponding evaluation, setup the following tools first
-bash src/wavtts/eval/eval_infer_batch.sh
-```
-
-## Objective Evaluation on Generated Results
-
-### Download Evaluation Model Checkpoints
+Objective evaluation requires ASR models and a speaker similarity model.
 
 1. Chinese ASR Model: [Paraformer-zh](https://huggingface.co/funasr/paraformer-zh)
 2. English ASR Model: [Faster-Whisper](https://huggingface.co/Systran/faster-whisper-large-v3)
-3. WavLM Model: Download from [Google Drive](https://drive.google.com/file/d/1-aE1NfzpRCLxA4GUxX9ITI3F9LlbtEGP/view).
+3. Speaker Similarity Model: WavLM (download `wavlm_large_finetune.pth` from [Google Drive](https://drive.google.com/file/d/1-aE1NfzpRCLxA4GUxX9ITI3F9LlbtEGP/view))
 
-> [!NOTE]  
-> ASR model will be automatically downloaded if `--local` not set for evaluation scripts.  
-> Otherwise, you should update the `asr_ckpt_dir` path values in `eval_librispeech_test_clean.py` or `eval_seedtts_testset.py`.
-> 
-> WavLM model must be downloaded and your `wavlm_ckpt_dir` path updated in `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py`.
+> **⚠️ Important Checkpoint Setup:**
+> - **ASR Models:** By default, the ASR models will be downloaded automatically from Hugging Face. If you are running in an offline environment with the `--local` flag, download them manually and update `asr_ckpt_dir` in `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py`.
+> - **WavLM Model:** This model must be downloaded manually. After downloading it, update `wavlm_ckpt_dir` in both `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py` before running evaluations.
 
-### Objective Evaluation Examples
+## 3. Prepare Test Datasets
 
-Update the path with your batch-inferenced results, and carry out WER / SIM / UTMOS evaluations:
+We recommend using the following standard datasets for evaluation:
+
+1. Seed-TTS Testset (ZH/EN): Download from [seed-tts-eval](https://github.com/BytedanceSpeech/seed-tts-eval).
+2. LibriSpeech test-clean (EN): Download from [OpenSLR](http://www.openslr.org/12/).
+
+Unzip the downloaded datasets and place them into your local `data/` directory.
+
+## 4. Running Evaluations
+
+You can either run the full generation and evaluation pipeline automatically, or compute metrics step by step on existing audio files.
+
+### A. All-in-One Batch Inference & Evaluation
+
+To run batch inference and evaluation, execute the following commands:
+
 ```bash
-# Evaluation [WER] for Seed-TTS test [ZH] set
-python src/wavtts/eval/eval_seedtts_testset.py --eval_task wer --lang zh --gen_wav_dir <GEN_WAV_DIR> --gpu_nums 8
+# Set up Accelerate if you have not configured it yet.
+accelerate config
 
-# Evaluation [SIM] for LibriSpeech-PC test-clean (cross-sentence)
-python src/wavtts/eval/eval_librispeech_test_clean.py --eval_task sim --gen_wav_dir <GEN_WAV_DIR> --librispeech_test_clean_path <TEST_CLEAN_PATH>
+# Generate audio only, skipping metric calculation.
+bash src/wavtts/eval/eval_infer_batch.sh --infer-only
 
-# Evaluation [UTMOS]. --ext: Audio extension
-python src/wavtts/eval/eval_utmos.py --audio_dir <WAV_DIR> --ext wav
+# Generate audio and calculate objective metrics automatically.
+bash src/wavtts/eval/eval_infer_batch.sh
 ```
 
-> [!NOTE]  
-> Evaluation results can also be found in `_*_results.jsonl` files saved in `<GEN_WAV_DIR>`/`<WAV_DIR>`.
+### B. Calculate Metrics Manually
+
+If you have already generated `.wav` files via batch inference, you can evaluate them independently by pointing the scripts to your `<GEN_WAV_DIR>`.
+
+```bash
+# Evaluation [WER] for Seed-TTS test [ZH] set
+python src/wavtts/eval/eval_seedtts_testset.py --eval_task wer --lang zh --gen_wav_dir "<GEN_WAV_DIR>" --gpu_nums 8
+
+# Evaluation [SIM] for LibriSpeech-PC test-clean (cross-sentence)
+python src/wavtts/eval/eval_librispeech_test_clean.py --eval_task sim --gen_wav_dir "<GEN_WAV_DIR>" --librispeech_test_clean_path "<TEST_CLEAN_PATH>"
+
+# Evaluation [UTMOS] for any directory containing audio files
+python src/wavtts/eval/eval_utmos.py --audio_dir "<GEN_WAV_DIR>" --ext wav
+```
+
+> **💡 Tip:**
+> Once evaluation is complete, detailed results will be saved as `_*_results.jsonl` files directly within your `<GEN_WAV_DIR>` directory.

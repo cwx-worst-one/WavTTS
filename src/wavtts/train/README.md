@@ -35,7 +35,7 @@ python src/wavtts/train/datasets/prepare_ljspeech.py
 
 ### B. Custom Dataset via Metadata (CSV)
 
-If you are using a custom dataset, you can format it with a `metadata.csv` file. For detailed guidance, see [this F5-TTS discussion thread (#57)](https://github.com/SWivid/F5-TTS/discussions/57#discussioncomment-10959029).
+If you are using a custom dataset, you can format it with a `metadata.csv` file. For detailed guidance, see [this discussion thread (#57)](https://github.com/SWivid/F5-TTS/discussions/57#discussioncomment-10959029).
 
 ```bash
 python src/wavtts/train/datasets/prepare_csv_wavs.py
