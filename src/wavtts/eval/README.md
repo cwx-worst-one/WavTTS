@@ -18,7 +18,7 @@ Objective evaluation requires ASR models and a speaker similarity model.
 
 > **⚠️ Important Checkpoint Setup:**
 > - **ASR Models:** By default, the ASR models will be downloaded automatically from Hugging Face. If you are running in an offline environment with the `--local` flag, download them manually and update `asr_ckpt_dir` in `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py`.
-> - **WavLM Model:** This model **MUST** be downloaded manually. After downloading it, update `wavlm_ckpt_dir` in both `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py` before running evaluations.
+> - **WavLM Model:** This model **MUST** be downloaded manually. Pass the downloaded `wavlm_large_finetune.pth` path with `--wavlm_ckpt_dir` for SIM metric scripts.
 
 ## 3. Prepare Test Datasets
 
@@ -45,7 +45,7 @@ accelerate config
 bash src/wavtts/eval/eval_infer_batch.sh --infer-only
 
 # Generate audio and calculate objective metrics automatically.
-bash src/wavtts/eval/eval_infer_batch.sh
+bash src/wavtts/eval/eval_infer_batch.sh --full-eval --wavlm-ckpt-dir "<WAVLM_CKPT_PATH>"
 ```
 
 ### B. Calculate Metrics Manually
@@ -57,11 +57,11 @@ If you have already generated `.wav` files via batch inference, you can evaluate
 python src/wavtts/eval/eval_seedtts_testset.py --eval_task wer --lang zh --gen_wav_dir "<GEN_WAV_DIR>" --gpu_nums 8
 
 # Evaluation [SIM] for LibriSpeech-PC test-clean (cross-sentence)
-python src/wavtts/eval/eval_librispeech_test_clean.py --eval_task sim --gen_wav_dir "<GEN_WAV_DIR>" --librispeech_test_clean_path "<TEST_CLEAN_PATH>"
+python src/wavtts/eval/eval_librispeech_test_clean.py --eval_task sim --gen_wav_dir "<GEN_WAV_DIR>" --librispeech_test_clean_path "<TEST_CLEAN_PATH>" --wavlm_ckpt_dir "<WAVLM_CKPT_PATH>"
 
 # Evaluation [UTMOS] for any directory containing audio files
 python src/wavtts/eval/eval_utmos.py --audio_dir "<GEN_WAV_DIR>" --ext wav
 ```
 
 > **💡 Tip:**
-> Once evaluation is complete, detailed results will be saved as `_*_results.jsonl` files directly within your `<GEN_WAV_DIR>` directory.
+> Once evaluation is completed, detailed results will be saved as `_*_results.jsonl` files directly within your `<GEN_WAV_DIR>` directory.

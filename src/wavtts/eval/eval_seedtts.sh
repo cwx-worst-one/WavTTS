@@ -37,6 +37,7 @@ GPUS="[0,1,2,3,4,5,6,7]"
 # GPUS="[0]"
 
 LOCAL=""
+WAVLM_CKPT_DIR="/mnt/bn/jdy-lq-5/chenwenxi/models/wavlm/wavlm_large_finetune.pth"
 
 gen_wav_subdir=seed${seed}_${ode_method}_nfe${nfe_step}_wav
 if [[ "${timestep_mapping}" == "uniform" ]]; then
@@ -78,7 +79,7 @@ for ckpt_step in "${ckpt_steps[@]}"; do
 
         if [[ " ${eval_metric[@]} " =~ " sim " ]]; then
             python src/wavtts/eval/eval_seedtts_testset.py \
-                -e sim -l "$lang" -g "$gen_wav_dir" -n "$GPUS" $LOCAL
+                -e sim -l "$lang" -g "$gen_wav_dir" -n "$GPUS" $LOCAL --wavlm_ckpt_dir "$WAVLM_CKPT_DIR"
         fi
 
         if [[ " ${eval_metric[@]} " =~ " utmos " ]]; then

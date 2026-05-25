@@ -16,6 +16,7 @@ LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
 TRAIN_GPU_TAG="8gpus"   # 8gpus, 16gpus, 32gpus
 CKPT_FILE="hf://worstchan/wavtts_scale_9/model_1000000.pt"
+WAVLM_CKPT_DIR=""
 
 cfg_strength=3.0
 infer_x_pred_clip=  # empty or <=0 means disabled; set to latents scale, e.g. 8.0, to enable x_pred clamp
@@ -34,6 +35,10 @@ DEBUG=false  # true, false
 INFER_ONLY=true  # true, false
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --full-eval)
+            INFER_ONLY=false
+            shift
+            ;;
         --infer-only)
             INFER_ONLY=true
             shift
@@ -74,6 +79,10 @@ while [[ $# -gt 0 ]]; do
             TRAIN_GPU_TAG="$2"
             shift 2
             ;;
+        --wavlm-ckpt-dir)
+            WAVLM_CKPT_DIR="$2"
+            shift 2
+            ;;
         *)
             echo "======== Unknown parameter: $1"
             exit 1
@@ -111,6 +120,9 @@ fi
 echo "======== Timestep mapping: ${timestep_mapping}"
 echo "======== ODE method: ${ode_method}"
 echo "======== Train GPU tag: ${TRAIN_GPU_TAG}"
+if [ -n "${WAVLM_CKPT_DIR}" ]; then
+    echo "======== WavLM checkpoint: ${WAVLM_CKPT_DIR}"
+fi
 RESULT_EXP_SUFFIX=""
 if [ "${TRAIN_GPU_TAG}" != "8gpus" ]; then
     RESULT_EXP_SUFFIX="_${TRAIN_GPU_TAG}"
@@ -127,6 +139,10 @@ if [ "$INFER_ONLY" = true ]; then
     echo "======== Mode: Execute infer tasks only"
 else
     echo "======== Mode: Execute full pipeline (infer + eval)"
+    if [ -z "${WAVLM_CKPT_DIR}" ]; then
+        echo "======== WavLM checkpoint is required for SIM evaluation. Pass --wavlm-ckpt-dir <path>."
+        exit 1
+    fi
 fi
 
 
@@ -157,20 +173,25 @@ execute_eval_tasks() {
     
     echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}, gen_wav_dir=${gen_wav_dir}"
     
+    local wavlm_ckpt_args=()
+    if [ -n "${WAVLM_CKPT_DIR}" ]; then
+        wavlm_ckpt_args=(--wavlm_ckpt_dir "${WAVLM_CKPT_DIR}")
+    fi
+
     case $task_name in
         "seedtts_test_zh")
             python src/wavtts/eval/eval_seedtts_testset.py -e wer -l zh -g "$gen_wav_dir" -n "$GPUS"
-            python src/wavtts/eval/eval_seedtts_testset.py -e sim -l zh -g "$gen_wav_dir" -n "$GPUS"
+            python src/wavtts/eval/eval_seedtts_testset.py -e sim -l zh -g "$gen_wav_dir" -n "$GPUS" "${wavlm_ckpt_args[@]}"
             python src/wavtts/eval/eval_utmos.py --audio_dir "$gen_wav_dir"
             ;;
         "seedtts_test_en")
             python src/wavtts/eval/eval_seedtts_testset.py -e wer -l en -g "$gen_wav_dir" -n "$GPUS"
-            python src/wavtts/eval/eval_seedtts_testset.py -e sim -l en -g "$gen_wav_dir" -n "$GPUS"
+            python src/wavtts/eval/eval_seedtts_testset.py -e sim -l en -g "$gen_wav_dir" -n "$GPUS" "${wavlm_ckpt_args[@]}"
             python src/wavtts/eval/eval_utmos.py --audio_dir "$gen_wav_dir"
             ;;
         "ls_pc_test_clean")
             python src/wavtts/eval/eval_librispeech_test_clean.py -e wer -g "$gen_wav_dir" -n "$GPUS" -p "$LS_TEST_CLEAN_PATH"
-            python src/wavtts/eval/eval_librispeech_test_clean.py -e sim -g "$gen_wav_dir" -n "$GPUS" -p "$LS_TEST_CLEAN_PATH"
+            python src/wavtts/eval/eval_librispeech_test_clean.py -e sim -g "$gen_wav_dir" -n "$GPUS" -p "$LS_TEST_CLEAN_PATH" "${wavlm_ckpt_args[@]}"
             python src/wavtts/eval/eval_utmos.py --audio_dir "$gen_wav_dir"
             ;;
     esac

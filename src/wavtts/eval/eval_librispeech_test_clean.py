@@ -30,6 +30,12 @@ def get_args():
         "-n", "--gpu_nums", type=str, default="8", help="Number of GPUs to use (e.g., 8) or GPU list (e.g., [0,1,2,3])"
     )
     parser.add_argument("-t", "--task", type=str, default="ls_pc_test_clean", choices=["ls_pc_test_clean", "libritts_train_clean_100_cross_sentence", "libritts_train_clean_100_same_sentence"])
+    parser.add_argument(
+        "--wavlm_ckpt_dir",
+        type=str,
+        default="",
+        help="Path to wavlm_large_finetune.pth for SIM evaluation.",
+    )
     parser.add_argument("--local", action="store_true", help="Use local custom checkpoint directory")
     return parser.parse_args()
 
@@ -73,12 +79,18 @@ def main():
     ## leading to a low similarity for the ground truth in some cases.
     # test_set = get_librispeech_test(metalst, gen_wav_dir, gpus, librispeech_test_clean_path, eval_ground_truth = True)  # eval ground truth
 
+    wavlm_ckpt_dir = args.wavlm_ckpt_dir
+    if eval_task == "sim" and not wavlm_ckpt_dir:
+        raise ValueError(
+            "--wavlm_ckpt_dir is required for SIM evaluation. "
+            "Download wavlm_large_finetune.pth and pass its path."
+        )
+
     local = args.local
     if local:  # use local custom checkpoint dir
         asr_ckpt_dir = "../checkpoints/Systran/faster-whisper-large-v3"
     else:
         asr_ckpt_dir = ""  # auto download to cache dir
-    wavlm_ckpt_dir = "/mnt/bn/jdy-lq-5/chenwenxi/models/wavlm/wavlm_large_finetune.pth"
 
     # --------------------------------------------------------------------------
 

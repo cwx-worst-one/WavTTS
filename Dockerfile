@@ -1,10 +1,10 @@
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
 USER root
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-LABEL github_repo="https://github.com/SWivid/F5-TTS"
+LABEL github_repo="https://github.com/cwx-worst-one/WavTTS"
 
 RUN set -x \
     && apt-get update \
@@ -13,13 +13,12 @@ RUN set -x \
     && apt-get install -y librdmacm1 libibumad3 librdmacm-dev libibverbs1 libibverbs-dev ibverbs-utils ibverbs-providers \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
-    
-WORKDIR /workspace
 
-RUN git clone https://github.com/SWivid/F5-TTS.git \
-    && cd F5-TTS \
-    && git submodule update --init --recursive \
-    && pip install -e . --no-cache-dir
+WORKDIR /workspace/WavTTS
+
+COPY . /workspace/WavTTS
+
+RUN pip install -e . --no-cache-dir
 
 ENV SHELL=/bin/bash
 
@@ -27,4 +26,4 @@ VOLUME /root/.cache/huggingface/hub/
 
 EXPOSE 7860
 
-WORKDIR /workspace/F5-TTS
+WORKDIR /workspace/WavTTS

@@ -28,6 +28,12 @@ def get_args():
     parser.add_argument(
         "-n", "--gpu_nums", type=str, default="8", help="Number of GPUs to use (e.g., 8) or GPU list (e.g., [0,1,2,3])"
     )
+    parser.add_argument(
+        "--wavlm_ckpt_dir",
+        type=str,
+        default="",
+        help="Path to wavlm_large_finetune.pth for SIM evaluation.",
+    )
     parser.add_argument("--local", action="store_true", help="Use local custom checkpoint directory")
     return parser.parse_args()
 
@@ -61,6 +67,13 @@ def main():
     gpus = parse_gpu_nums(args.gpu_nums)
     test_set = get_seed_tts_test(metalst, gen_wav_dir, gpus)
 
+    wavlm_ckpt_dir = args.wavlm_ckpt_dir
+    if eval_task == "sim" and not wavlm_ckpt_dir:
+        raise ValueError(
+            "--wavlm_ckpt_dir is required for SIM evaluation. "
+            "Download wavlm_large_finetune.pth and pass its path."
+        )
+
     local = args.local
     if local:  # use local custom checkpoint dir
         if asr_lang == "zh":
@@ -69,7 +82,6 @@ def main():
             asr_ckpt_dir = "../checkpoints/Systran/faster-whisper-large-v3"
     else:
         asr_ckpt_dir = ""  # auto download to cache dir
-    wavlm_ckpt_dir = "/mnt/bn/jdy-lq-5/chenwenxi/models/wavlm/wavlm_large_finetune.pth"
 
     # --------------------------------------------------------------------------
 
