@@ -3,7 +3,6 @@ set -e
 export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
 export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
-export HF_ENDPOINT=https://hf-mirror.com
 export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 # export CUDA_VISIBLE_DEVICES="0"
 
@@ -11,12 +10,12 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 MODEL_NAME=WavTTS_scale_9_16k
 RESULT_MODEL_NAME="${MODEL_NAME}"
 SEEDS=(0)
-CKPTSTEPS=(800000)  # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+CKPTSTEPS=(1000000)
 TASKS=("seedtts_test_en") # seedtts_test_zh, seedtts_test_en, ls_pc_test_clean
 LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
 TRAIN_GPU_TAG="8gpus"   # 8gpus, 16gpus, 32gpus
-CKPT_PATH_DIR=/mnt/hdfs/ssd_hldy/chenwenxi.sylvan/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16
+CKPT_FILE="hf://worstchan/wavtts_scale_9/model_1000000.pt"
 
 cfg_strength=3.0
 infer_x_pred_clip=  # empty or <=0 means disabled; set to latents scale, e.g. 8.0, to enable x_pred clamp
@@ -186,11 +185,7 @@ if [ -n "${infer_x_pred_clip}" ] && [ "${infer_x_pred_clip}" != "0" ] && [ "${in
 fi
 
 for ckptstep in "${CKPTSTEPS[@]}"; do
-    CKPT_PATH="${CKPT_PATH_DIR}/ckpts/model_${ckptstep}.pt"
-    if [ ! -f "${CKPT_PATH}" ]; then
-        echo "======== Checkpoint not found: ${CKPT_PATH}"
-        exit 1
-    fi
+    CKPT_PATH="${CKPT_FILE}"
 
     echo "======== Processing ckptstep: ${ckptstep}"
     echo "======== Using checkpoint: ${CKPT_PATH}"

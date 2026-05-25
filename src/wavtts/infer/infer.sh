@@ -4,7 +4,6 @@ set -euo pipefail
 # Model Configuration
 MODEL_NAME="WavTTS_scale_9_16k"
 MODEL_CFG="src/wavtts/configs/WavTTS_scale_9_16k.yaml"
-CKPT_FILE="/mnt/hdfs/ssd_hldy/chenwenxi.sylvan/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16/ckpts/model_800000.pt"
 
 # Zero-shot TTS Configuration
 VOCAB_FILE="infer/examples/vocab.txt"
@@ -30,7 +29,6 @@ export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:${PYTHONPATH}}"
 # python -m debugpy --listen 127.0.0.1:56789 src/wavtts/infer/infer_cli.py \
 python src/wavtts/infer/infer_cli.py \
     --model_cfg "${MODEL_CFG}" \
-    --ckpt_file "${CKPT_FILE}" \
     --ref_audio "${REF_AUDIO}" \
     --ref_text "${REF_TEXT}" \
     --gen_text "${GEN_TEXT}" \

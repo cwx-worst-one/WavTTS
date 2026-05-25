@@ -50,7 +50,7 @@ pip install -e .
 
 ## Model Checkpoints
 
-We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). The released checkpoint uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml` and supports 16 kHz zero-shot TTS inference.
+The official WavTTS checkpoint is available on Hugging Face: [WavTTS 🤗](https://huggingface.co/worstchan/wavtts_scale_9). It uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml`, supports 16 kHz zero-shot TTS inference, and will be automatically downloaded during inference.
 
 
 ## Inference
@@ -64,7 +64,6 @@ To synthesize speech from a reference audio prompt, run:
 ```bash
 wavtts_infer-cli \
   --model WavTTS_scale_9_16k \
-  --ckpt_file "/path/to/model.pt" \
   --ref_audio "provide_prompt_wav_path_here.wav" \
   --ref_text "The content, subtitle, or transcription of the reference audio." \
   --gen_text "The text you want WavTTS to synthesize."
@@ -76,8 +75,8 @@ You can also run inference with a TOML configuration file:
 # Use the provided example config
 wavtts_infer-cli -c src/wavtts/infer/examples/basic.toml
 
-# Use your own custom config
-wavtts_infer-cli -c custom.toml
+# Use a custom config with optional argument overrides
+wavtts_infer-cli -c custom.toml --gen_text "Override text here."
 ```
 
 ### Script-based Inference

@@ -1,7 +1,7 @@
 # WavTTS config name or provide model_cfg explicitly
 model = "WavTTS_scale_9_16k"
-# Required: local path or cached_path URI, e.g. hf://...
-ckpt_file = "/mnt/hdfs/ssd_hldy/chenwenxi.sylvan/exp/nar_wav_tts/emilia/F5TTS_v1_Large_wav_x_pred_scale_9_aux_mel_w_0_05_noise_schedule_0_8_16k_dropout_0_joint_drop_0_1-emilia-8gpus-19200sample_per_gpu-bf16/ckpts/model_800000.pt"
+# Optional: leave empty to download the default WavTTS checkpoint from Hugging Face.
+ckpt_file = ""
 vocab_file = "infer/examples/vocab.txt"
 ref_audio = "infer/examples/basic_ref_en.wav"
 # If an empty "", transcribes the reference audio automatically.

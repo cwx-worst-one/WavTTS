@@ -33,6 +33,12 @@ from wavtts.infer.utils_infer import (
 )
 
 
+DEFAULT_MODEL = "WavTTS_scale_9_16k"
+DEFAULT_CKPT_FILES = {
+    DEFAULT_MODEL: "hf://worstchan/wavtts_scale_9/model_1000000.pt",
+}
+
+
 parser = argparse.ArgumentParser(
     prog="python3 infer-cli.py",
     description="Commandline interface for WavTTS waveform inference.",
@@ -65,7 +71,7 @@ parser.add_argument(
     "-p",
     "--ckpt_file",
     type=str,
-    help="The path or cached_path URI to model checkpoint. Required for WavTTS inference.",
+    help="The path or cached_path URI to model checkpoint. Leave blank to use the default WavTTS checkpoint.",
 )
 parser.add_argument(
     "-v",
@@ -190,7 +196,7 @@ config = tomli.load(open(args.config, "rb"))
 
 # command-line interface parameters
 
-model = args.model or config.get("model", "WavTTS_scale_8_16k")
+model = args.model or config.get("model", DEFAULT_MODEL)
 ckpt_file = args.ckpt_file or config.get("ckpt_file", "")
 vocab_file = args.vocab_file or config.get("vocab_file", "")
 
@@ -272,9 +278,8 @@ model_arc = model_cfg.model.arch
 cfm_kwargs = getattr(model_cfg.model, "cfm", {}) or {}
 
 if not ckpt_file:
-    raise ValueError("--ckpt_file is required for WavTTS inference. It can be a local path or cached_path URI such as hf://...")
+    ckpt_file = DEFAULT_CKPT_FILES.get(model, DEFAULT_CKPT_FILES[DEFAULT_MODEL])
 
-# Keep a future HF/cache interface without falling back to legacy F5/E2 defaults.
 if ckpt_file.startswith(("hf://", "http://", "https://")):
     ckpt_file = str(cached_path(ckpt_file))
 

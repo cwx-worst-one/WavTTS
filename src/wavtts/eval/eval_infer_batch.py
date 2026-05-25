@@ -11,6 +11,7 @@ from importlib.resources import files
 import torch
 import torchaudio
 from accelerate import Accelerator
+from cached_path import cached_path
 from hydra.utils import get_class
 from omegaconf import OmegaConf
 from tqdm import tqdm
@@ -35,6 +36,7 @@ target_rms = 0.1    # 0.1, 0.12
 
 
 rel_path = str(files("wavtts").joinpath("../../"))
+DEFAULT_CKPT_FILE = "hf://worstchan/wavtts_scale_9/model_1000000.pt"
 
 
 def main():
@@ -63,12 +65,12 @@ def main():
     )
     parser.add_argument(
         "--ljspeech_wav_dir",
-        default="/mnt/bn/jdy-lq-5/chenwenxi/data/ljspeech/LJSpeech-1.1/wavs",
+        default=f"{rel_path}/data/ljspeech/LJSpeech-1.1/wavs",
         type=str,
         help="Directory containing original LJSpeech wavs. Only used when truth duration is enabled.",
     )
 
-    parser.add_argument("--ckpt_path", default=None, type=str)
+    parser.add_argument("--ckpt_path", default=DEFAULT_CKPT_FILE, type=str)
     parser.add_argument(
         "--output_dir",
         default=None,
@@ -295,7 +297,9 @@ def main():
     #         ckpt_path = ckpt_prefix + ".safetensors"
     #     else:
     #         raise ValueError("The checkpoint does not exist or cannot be found in given location.")
-    ckpt_path = args.ckpt_path
+    ckpt_path = args.ckpt_path or DEFAULT_CKPT_FILE
+    if ckpt_path.startswith(("hf://", "http://", "https://")):
+        ckpt_path = str(cached_path(ckpt_path))
 
     load_dtype = amp_dtype_map.get(load_dtype_name, torch.float32)
     model = load_checkpoint(model, ckpt_path, device, dtype=load_dtype, use_ema=use_ema)
