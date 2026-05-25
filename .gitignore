@@ -138,6 +138,7 @@ output
 # src/wavtts/train/runs_emilia/
 .venv/
 .codex
+.claude
 
 stats_*
 

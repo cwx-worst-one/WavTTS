@@ -16,7 +16,7 @@
 
 </div>
 
-## Introduction
+## 📖 Introduction
 
 WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space, without relying on intermediate acoustic representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-fidelity waveform generation.
 
@@ -24,13 +24,13 @@ WavTTS is an end-to-end zero-shot TTS framework that generates speech directly i
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
 </div>
 
-You can find details in the paper [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling]().
+For more details, please refer to our paper: [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling](https://arxiv.org/abs/2605.00000).
 
-**Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For general usage guidance, please refer to the original repository. The following sections summarize the main WavTTS usage workflows.
+**Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For general usage, troubleshooting, and basic guidance, please refer to the original F5-TTS repository. The sections below outline workflows specific to WavTTS.
 
-## Installation
+## ⚙️ Installation
 
-We recommend using Conda to manage the environment.
+We recommend using Conda to manage the environment and dependencies.
 
 ```bash
 # 1. Clone the repository
@@ -41,25 +41,24 @@ cd WavTTS
 conda create -n wavtts python=3.10
 conda activate wavtts
 
-# 3. Install PyTorch >= 2.2.0 with CUDA support, e.g.,
+# 3. Install PyTorch (>=2.2.0) with CUDA support, e.g.,
 pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 
 # 4. Install WavTTS in editable mode
 pip install -e .
 ```
 
-## Model Checkpoints
+## 📦 Model Checkpoints
 
-The official WavTTS checkpoint is available on Hugging Face: [WavTTS 🤗](https://huggingface.co/worstchan/wavtts_scale_9). It uses `src/wavtts/configs/WavTTS_scale_9_16k.yaml`, supports 16 kHz zero-shot TTS inference, and will be automatically downloaded during inference.
+The official WavTTS checkpoint is available on Hugging Face: [WavTTS 🤗](https://huggingface.co/worstchan/wavtts_scale_9). The default checkpoint supports 16 kHz zero-shot TTS inference and will be downloaded automatically the first time you run the inference script.
 
+## 🚀 Inference
 
-## Inference
-
-WavTTS supports both command-line inference and script-based inference. For more details, please refer to the [inference guide](src/wavtts/infer/README.md).
+WavTTS supports both command-line inference and script-based inference. For more details, please refer to the [Inference Guide](src/wavtts/infer/README.md).
 
 ### CLI Inference
 
-To synthesize speech from a reference audio prompt, run:
+Generate speech using a short reference audio prompt. CLI arguments will automatically override values defined in the TOML config.
 
 ```bash
 wavtts_infer-cli \
@@ -69,77 +68,75 @@ wavtts_infer-cli \
   --gen_text "The text you want WavTTS to synthesize."
 ```
 
-You can also run inference with a TOML configuration file:
+Alternatively, manage your parameters cleanly using a TOML configuration file:
 
 ```bash
-# Use the provided example config
+# Use the provided default config
 wavtts_infer-cli -c src/wavtts/infer/examples/basic.toml
 
-# Use a custom config with optional argument overrides
+# Use a custom config (with an inline text override)
 wavtts_infer-cli -c custom.toml --gen_text "Override text here."
 ```
 
 ### Script-based Inference
 
-To run inference with the script, modify the paths and text in `src/wavtts/infer/infer.sh`, then execute:
+For customized pipelines, you can directly modify the paths and texts in `src/wavtts/infer/infer.sh` and execute:
 
 ```bash
 bash src/wavtts/infer/infer.sh
 ```
 
-## Training
+## 🏋️ Training
 
-Training requires preprocessed dataset metadata. For details on data preparation, training, and fine-tuning, please refer to the [training guide](src/wavtts/train/README.md).
+Training WavTTS requires preprocessed dataset metadata. For a complete walkthrough of data preparation, training, and fine-tuning, please refer to the [Training Guide](src/wavtts/train/README.md).
 
 ### Data Preparation
 
-We use [Emilia](https://huggingface.co/datasets/amphion/Emilia-Dataset) as the training dataset in our main experiments. After downloading the dataset, update the corresponding paths in the preparation script and run:
+We use [Emilia](https://huggingface.co/datasets/amphion/Emilia-Dataset) as the training dataset in our main experiments. After downloading Emilia, update the paths in the preparation script and run:
 
 ```bash
-# Prepare training metadata for the Emilia dataset.
+# Prepare training metadata for the Emilia dataset
 python src/wavtts/train/datasets/prepare_emilia.py
 ```
 
-Data preparation scripts for other datasets (e.g., LibriTTS) are also available under `src/wavtts/train/datasets/`. To train WavTTS on a custom dataset, please adapt the dataset loading logic in `src/wavtts/model/dataset.py`.
+Preparation scripts for other datasets like LibriTTS are available under `src/wavtts/train/datasets/`. To use a custom dataset, please adapt the loading logic in `src/wavtts/model/dataset.py`.
 
 ### Launching Training
 
-WavTTS can be trained directly with Accelerate:
+WavTTS can be trained directly with `accelerate`:
 
 ```bash
-# Configure Accelerate, e.g., multi-GPU DDP with mixed precision.
+# Step 1: Configure Accelerate (e.g., multi-GPU DDP, mixed precision)
 accelerate config
 
-# Launch training with a config file; Config files are located under src/wavtts/configs/.
+# Step 2: Launch training using a Hydra config
 accelerate launch src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml
 
-# Accelerate and Hydra options can be overridden from the command line.
+# Example with inline overrides:
 accelerate launch --mixed_precision=bf16 src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml ++datasets.batch_size_per_gpu=19200
 ```
 
-Alternatively, you can use the launcher script for the main WavTTS experiments:
+For our main experiments, we provide a unified launcher script. Remember to edit the default environment variables at the top of the script before running:
 
 ```bash
 bash src/wavtts/train/run_main_train.sh
 ```
 
-This is the script used for our main experiments. Please edit the default values near the top of the script according to your environment.
+
+## 📊 Evaluation
+
+For evaluation setup, dataset preparation, and objective metric scripts, please refer to the [Evaluation Guide](src/wavtts/eval/README.md).
 
 
-## Evaluation
+## 🙏 Acknowledgements
 
-For evaluation setup, dataset preparation, and objective metric scripts, please refer to the [evaluation guide](src/wavtts/eval/README.md).
+WavTTS is built upon the awesome [F5-TTS](https://github.com/SWivid/F5-TTS) codebase, with references to the implementations of [DAC](https://github.com/descriptinc/descript-audio-codec) and [JiT](https://github.com/LTH14/JiT). We sincerely thank the authors for their invaluable open-source contributions.
 
+If you encounter general pipeline or environment issues, we recommend first checking the [F5-TTS issue tracker](https://github.com/SWivid/F5-TTS/issues), where many common questions may have already been discussed or resolved.
 
-## Acknowledgements
+## 📝 Citation
 
-WavTTS is built upon the awesome [F5-TTS](https://github.com/SWivid/F5-TTS) codebase. with references to the implementations of [DAC](https://github.com/descriptinc/descript-audio-codec) and [JiT](https://github.com/LTH14/JiT). We sincerely thank the authors for their valuable open-source contributions.
-
-If you encounter any issues, we recommend first checking the [F5-TTS issue tracker](https://github.com/SWivid/F5-TTS/issues), where many common questions may have already been discussed or resolved.
-
-## Citation
-
-If you find this work useful in your research, please consider citing:
+If you find this work useful in your research, please consider citing our paper:
 
 ```bibtex
 @article{chen2026wavtts,
@@ -150,6 +147,6 @@ If you find this work useful in your research, please consider citing:
 }
 ```
 
-## License
+## 📜 License
 
-The codebase of this repository is released under the MIT License. Due to the license restrictions of the Emilia training data, our pre-trained models are released under the CC BY-NC 4.0 license.
+The codebase of this repository is released under the MIT License. Due to the license restrictions of the Emilia training dataset, the released pre-trained model weights are licensed under CC BY-NC 4.0.
