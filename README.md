@@ -55,7 +55,7 @@ We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). The 
 
 ## Inference
 
-WavTTS supports both command-line inference and script-based inference. For more details, please refer to the [inference guide](src/wavtts/infer/README.md).
+WavTTS supports both CLI inference and script-based inference. For more details, please refer to the [inference guide](src/wavtts/infer/README.md).
 
 ### CLI Inference
 
@@ -82,7 +82,7 @@ wavtts_infer-cli -c custom.toml
 
 ### Script-based Inference
 
-To run single-sample inference with the script, modify the paths and text in `src/wavtts/infer/infer.sh`, then execute:
+To run inference with the script, modify the paths and text in `src/wavtts/infer/infer.sh`, then execute:
 
 ```bash
 bash src/wavtts/infer/infer.sh
@@ -99,7 +99,7 @@ We use [Emilia](https://huggingface.co/datasets/amphion/Emilia-Dataset) as the t
 python src/wavtts/train/datasets/prepare_emilia.py
 ```
 
-Data preparation scripts for other datasets, such as LibriTTS, are also available under `src/wavtts/train/datasets/`. To train WavTTS on a custom dataset, please adapt the dataset loading logic in `src/wavtts/model/dataset.py`.
+Data preparation scripts for other datasets (e.g., LibriTTS) are also available under `src/wavtts/train/datasets/`. To train WavTTS on a custom dataset, please adapt the dataset loading logic in `src/wavtts/model/dataset.py`.
 
 ### Launching Training
 
