@@ -240,8 +240,8 @@ if __name__ == "__main__":
     polyphone = True
 
     langs = ["ZH", "EN"]
-    dataset_dir = "/mnt/hdfs/ssd_hldy/chenwenxi.sylvan/data/emilia"
-    dataset_name = f"Emilia_{'_'.join(langs)}_{tokenizer}_hdfs"
+    dataset_dir = "/path/to/emilia"
+    dataset_name = f"Emilia_{'_'.join(langs)}_{tokenizer}"
     save_dir = str(files("wavtts").joinpath("../../")) + f"/data/{dataset_name}"
     print(f"\nPrepare for {dataset_name}, will save to {save_dir}\n")
 

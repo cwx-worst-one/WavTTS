@@ -86,9 +86,8 @@ def main():
 if __name__ == "__main__":
     max_workers = 32
     tokenizer = "char"
-    dataset_dir = "/home/ubuntu/emilia-dataset/Emilia-YODAS/EN"
+    dataset_dir = "/path/to/Emilia-YODAS/EN"
     dataset_name = f"Emilia_EN_{tokenizer}"
-    # save_dir = os.path.expanduser(f"~/F5-TTS/data/{dataset_name}")
     save_dir = str(files("wavtts").joinpath("../../")) + f"/data/{dataset_name}"
 
     print(f"Prepare for {dataset_name}, will save to {save_dir}\n")

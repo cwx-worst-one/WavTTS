@@ -2,8 +2,6 @@
 set -euo pipefail
 
 # Main public training launcher for the current WavTTS training baseline.
-# This script intentionally avoids hard-coded personal paths, proxy settings,
-# cluster-specific environment variables, and secret tokens.
 
 CONFIG_NAME="WavTTS_scale_9_16k"
 DATASET_NAME="emilia"
@@ -12,7 +10,7 @@ NUM_MACHINES="1"
 MIXED_PRECISION="bf16"
 BATCH_SIZE_PER_GPU="19200"
 NUM_WORKERS="16"
-MASTER_PORT="29500"
+MASTER_PORT="49500"
 OUTPUT_ROOT="./exp/nar_wav_tts"
 
 export OMP_NUM_THREADS=1

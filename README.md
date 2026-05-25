@@ -55,14 +55,15 @@ We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). The 
 
 ## Inference
 
-WavTTS supports both command-line inference and script-based inference.
+WavTTS supports both command-line inference and script-based inference. For more details, please refer to the [inference guide](src/wavtts/infer/README.md).
 
 ### CLI Inference
 
 To synthesize speech from a reference audio prompt, run:
 
 ```bash
-wavtts_infer-cli --model WavTTS_scale_9_16k \
+wavtts_infer-cli \
+  --model WavTTS_scale_9_16k \
   --ckpt_file "/path/to/model.pt" \
   --ref_audio "provide_prompt_wav_path_here.wav" \
   --ref_text "The content, subtitle, or transcription of the reference audio." \
@@ -126,39 +127,7 @@ This is the script used for our main experiments. Please edit the default values
 
 ## Evaluation
 
-Install evaluation dependencies first:
-
-```bash
-pip install -e ".[eval]"
-```
-
-To generate samples for evaluation:
-
-```bash
-accelerate config
-bash src/wavtts/eval/eval_infer_batch.sh --infer-only
-```
-
-To run batch inference together with the evaluation pipeline:
-
-```bash
-bash src/wavtts/eval/eval_infer_batch.sh
-```
-
-Objective evaluation examples:
-
-```bash
-# WER on Seed-TTS test set.
-python src/wavtts/eval/eval_seedtts_testset.py --eval_task wer --lang zh --gen_wav_dir <GEN_WAV_DIR> --gpu_nums 8
-
-# Speaker similarity on LibriSpeech-PC test-clean.
-python src/wavtts/eval/eval_librispeech_test_clean.py --eval_task sim --gen_wav_dir <GEN_WAV_DIR> --librispeech_test_clean_path <TEST_CLEAN_PATH>
-
-# UTMOS.
-python src/wavtts/eval/eval_utmos.py --audio_dir <WAV_DIR> --ext wav
-```
-
-See `src/wavtts/eval/README.md` for dataset preparation and evaluation checkpoint requirements.
+For evaluation setup, dataset preparation, and objective metric scripts, please refer to the [evaluation guide](src/wavtts/eval/README.md).
 
 
 ## Acknowledgements
