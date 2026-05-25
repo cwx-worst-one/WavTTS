@@ -18,7 +18,7 @@ Objective evaluation requires ASR models and a speaker similarity model.
 
 > **⚠️ Important Checkpoint Setup:**
 > - **ASR Models:** By default, the ASR models will be downloaded automatically from Hugging Face. If you are running in an offline environment with the `--local` flag, download them manually and update `asr_ckpt_dir` in `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py`.
-> - **WavLM Model:** This model must be downloaded manually. After downloading it, update `wavlm_ckpt_dir` in both `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py` before running evaluations.
+> - **WavLM Model:** This model **MUST** be downloaded manually. After downloading it, update `wavlm_ckpt_dir` in both `eval_librispeech_test_clean.py` and `eval_seedtts_testset.py` before running evaluations.
 
 ## 3. Prepare Test Datasets
 
