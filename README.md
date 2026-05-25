@@ -55,7 +55,7 @@ We provide the official WavTTS checkpoint on Hugging Face: [WavTTS 🤗](). The 
 
 ## Inference
 
-WavTTS supports both CLI inference and script-based inference. For more details, please refer to the [inference guide](src/wavtts/infer/README.md).
+WavTTS supports both command-line inference and script-based inference. For more details, please refer to the [inference guide](src/wavtts/infer/README.md).
 
 ### CLI Inference
 
@@ -89,6 +89,8 @@ bash src/wavtts/infer/infer.sh
 ```
 
 ## Training
+
+Training requires preprocessed dataset metadata. For details on data preparation, training, and fine-tuning, please refer to the [training guide](src/wavtts/train/README.md).
 
 ### Data Preparation
 
