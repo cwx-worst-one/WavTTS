@@ -1,0 +1,70 @@
+# VCS and local tooling
+.git
+.gitignore
+.github
+.claude
+.codex
+.vscode
+.idea
+.history
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# Build and packaging artifacts
+build/
+dist/
+.eggs/
+*.egg-info/
+wheels/
+
+# Local datasets and generated outputs
+/data/
+/exp/
+/results/
+/output/
+/generated_output/
+/log/
+/logs/
+/runs/
+/wandb/
+/tensorboard/
+/assets/
+
+# Model checkpoints and generated media
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.data
+*.index
+*.wav
+*.mp3
+*.flac
+
+# Keep packaged inference examples
+!src/wavtts/infer/examples/*.wav
+!src/wavtts/infer/examples/vocab.txt
+
+# Archives and temporary files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store

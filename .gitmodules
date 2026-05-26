@@ -1,8 +1,0 @@
-[submodule "torch-museval"]
-	path = recipes/soundstream/torch-museval
-	url = git@code.byted.org:lab-audio/torch-museval.git
-	branch = wtl/update
-[submodule "apps/mariana"]
-	path = apps/mariana
-	url = git@code.byted.org:seed/mariana.git
-    

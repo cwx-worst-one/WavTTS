@@ -85,6 +85,9 @@ For customized pipelines, you can directly modify the paths and texts in `src/wa
 bash src/wavtts/infer/infer.sh
 ```
 
+> **💡 Tip:**
+> If you notice obvious background noise in the synthesized speech, try lowering the `shift` value to mitigate it (e.g., set `shift = 1.0`).
+
 ## 🏋️ Training
 
 Training WavTTS requires preprocessed dataset metadata. For a complete walkthrough of data preparation, training, and fine-tuning, please refer to the [Training Guide](src/wavtts/train/README.md).

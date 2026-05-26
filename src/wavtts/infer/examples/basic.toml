@@ -6,7 +6,7 @@ vocab_file = "infer/examples/vocab.txt"
 # Reference prompt and generation text
 ref_audio = "infer/examples/basic_ref_en.wav"
 ref_text = "Some call me nature, others call me mother nature."
-gen_text = "I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring."
+gen_text = "I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall."
 gen_file = ""  # If set, this file is used instead of gen_text.
 
 # Output
