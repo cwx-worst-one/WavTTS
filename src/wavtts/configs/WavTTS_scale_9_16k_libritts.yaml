@@ -4,7 +4,7 @@ hydra:
 
 datasets:
   name: LibriTTS_100_360_500  # dataset name
-  batch_size_per_gpu: 19200  # 8 GPUs, 8 * 38400 = 307200
+  batch_size_per_gpu: 19200  # 8 GPUs, 8 * 19200 = 153,600
   batch_size_type: frame  # frame | sample
   max_samples: 64  # max sequences per batch if use frame-wise batch_size. we set 32 for small models, 64 for base models
   num_workers: 16

@@ -164,8 +164,6 @@ class InputEmbedding(nn.Module):
         else:
             x_h = self.x_proj(x)
             c_h = self.cond_proj(cond)
-            # c_global = c_h.mean(dim=1, keepdim=True) # TODO: may improve timbre conditioning
-            # c_h = c_h + c_global
             h = self.fuse(torch.cat((x_h, c_h, text_embed), dim=-1))
 
         h = self.conv_pos_embed(h, mask=audio_mask) + h

@@ -26,7 +26,6 @@ mkdir -p "${OUTPUT_DIR}"
 
 export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-# python -m debugpy --listen 127.0.0.1:56789 src/wavtts/infer/infer_cli.py \
 python src/wavtts/infer/infer_cli.py \
     --model_cfg "${MODEL_CFG}" \
     --ref_audio "${REF_AUDIO}" \

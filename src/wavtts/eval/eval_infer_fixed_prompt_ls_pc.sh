@@ -138,7 +138,7 @@ if [ -z "${FIXED_PROMPT_TEXT}" ]; then
     exit 1
 fi
 
-echo "======== Starting F5-TTS fixed-prompt ls_pc_test_clean inference task..."
+echo "======== Starting WavTTS fixed-prompt ls_pc_test_clean inference task..."
 echo "======== Load dtype: ${LOAD_DTYPE}"
 echo "======== Infer dtype: ${INFER_DTYPE}"
 echo "======== Result model name: ${RESULT_MODEL_NAME}"
