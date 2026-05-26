@@ -9,7 +9,7 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 # export CUDA_VISIBLE_DEVICES="0"
 
 # Configuration parameters. Keep this block aligned with eval_infer_batch.sh.
-MODEL_NAME=WavTTS_scale_8_16k
+MODEL_NAME=WavTTS
 RESULT_MODEL_NAME="${MODEL_NAME}"
 OUTPUT_TAG="wav"
 SEEDS=(0)

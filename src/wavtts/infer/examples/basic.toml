@@ -1,5 +1,5 @@
 # Model and checkpoint
-model = "WavTTS_scale_9_16k"
+model = "WavTTS"
 ckpt_file = ""  # Leave empty to download the default Hugging Face checkpoint.
 vocab_file = "infer/examples/vocab.txt"
 

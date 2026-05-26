@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Model Configuration
-MODEL_NAME="WavTTS_scale_9_16k"
-MODEL_CFG="src/wavtts/configs/WavTTS_scale_9_16k.yaml"
+MODEL_NAME="WavTTS"
+MODEL_CFG="src/wavtts/configs/WavTTS.yaml"
 
 # Zero-shot TTS Configuration
 VOCAB_FILE="infer/examples/vocab.txt"

@@ -61,7 +61,7 @@ Generate speech using a short reference audio prompt. CLI arguments will automat
 
 ```bash
 wavtts_infer-cli \
-  --model WavTTS_scale_9_16k \
+  --model WavTTS \
   --ref_audio "provide_prompt_wav_path_here.wav" \
   --ref_text "The content, subtitle, or transcription of the reference audio." \
   --gen_text "The text you want WavTTS to synthesize."
@@ -113,10 +113,10 @@ accelerate config
 
 # Step 2: Launch training using a Hydra config
 # YAML configuration files are located under the src/wavtts/configs/ directory.
-accelerate launch src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml
+accelerate launch src/wavtts/train/train.py --config-name WavTTS.yaml
 
 # Example with inline overrides:
-accelerate launch --mixed_precision=bf16 src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml ++datasets.batch_size_per_gpu=19200
+accelerate launch --mixed_precision=bf16 src/wavtts/train/train.py --config-name WavTTS.yaml ++datasets.batch_size_per_gpu=19200
 ```
 
 For our main experiments, we provide a unified launcher script. Remember to edit the default environment variables at the top of the script before running:

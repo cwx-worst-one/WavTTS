@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Public LibriTTS training launcher for the retained WavTTS LibriTTS config.
 
-CONFIG_NAME="WavTTS_scale_9_16k_libritts"
+CONFIG_NAME="WavTTS_libritts"
 DATASET_NAME="libritts"
 NUM_PROCESSES="8"
 NUM_MACHINES="1"

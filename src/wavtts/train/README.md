@@ -54,11 +54,11 @@ accelerate config
 
 # 2. Launch training
 # YAML configuration files are located under the src/wavtts/configs/ directory.
-accelerate launch src/wavtts/train/train.py --config-name WavTTS_scale_9_16k.yaml
+accelerate launch src/wavtts/train/train.py --config-name WavTTS.yaml
 
 # Example with inline overrides:
 accelerate launch --mixed_precision=bf16 src/wavtts/train/train.py \
-  --config-name WavTTS_scale_9_16k.yaml \
+  --config-name WavTTS.yaml \
   ++datasets.batch_size_per_gpu=19200
 ```
 

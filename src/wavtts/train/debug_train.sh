@@ -20,7 +20,7 @@ mixed_precision=bf16
 batch_size_per_gpu=12800        # 19200, 22400, 25600, 38400, 51200
 num_workers=16
 
-CONFIG_NAME="WavTTS_scale_9_16k"
+CONFIG_NAME="WavTTS"
 EXP_NAME="debug_test"
 OUTDIR="/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/${EXP_NAME}"
 DEBUG_MODE=False     # True, False

@@ -20,7 +20,7 @@ Run inference by passing the required arguments directly:
 
 ```bash
 wavtts_infer-cli \
-  --model WavTTS_scale_9_16k \
+  --model WavTTS \
   --ref_audio "infer/examples/basic_ref_en.wav" \
   --ref_text "Some call me nature, others call me mother nature." \
   --gen_text "The text you want WavTTS to synthesize."
@@ -42,7 +42,7 @@ wavtts_infer-cli -c custom.toml --gen_text "Override text here."
 **Example `custom.toml`:**
 ```toml
 # Model settings
-model = "WavTTS_scale_9_16k"
+model = "WavTTS"
 ckpt_file = "" # Leave empty to use the Hugging Face default
 vocab_file = "infer/examples/vocab.txt"
 

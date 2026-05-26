@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Main public training launcher for the current WavTTS training baseline.
 
-CONFIG_NAME="WavTTS_scale_9_16k"
+CONFIG_NAME="WavTTS"
 DATASET_NAME="emilia"
 NUM_PROCESSES="8"
 NUM_MACHINES="1"
