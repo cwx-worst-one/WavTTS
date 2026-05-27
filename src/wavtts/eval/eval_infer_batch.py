@@ -97,15 +97,6 @@ def main():
     )
     parser.add_argument("--cfg_strength", default=3.0, type=float)
     parser.add_argument(
-        "--infer_x_pred_clip",
-        default=None,
-        type=float,
-        help=(
-            "Optional inference-time clamp for wav-only x_pred predictions in latent scale. "
-            "Use <= 0 or omit to disable. A typical value is model.cfm.latents_scale, e.g. 8.0."
-        ),
-    )
-    parser.add_argument(
         "--load_dtype",
         default="fp32",
         choices=["bf16", "fp16", "fp32"],
@@ -141,9 +132,6 @@ def main():
 
     infer_batch_size = 1  # max frames. 1 for ddp single inference (recommended)
     cfg_strength = args.cfg_strength
-    infer_x_pred_clip = args.infer_x_pred_clip
-    if infer_x_pred_clip is not None and infer_x_pred_clip <= 0:
-        infer_x_pred_clip = None
     speed = 1.0
     use_truth_duration = False
     no_ref_audio = False
@@ -237,7 +225,6 @@ def main():
             f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
             f"{f'_shift{shift}' if shift != 1.0 else ''}"
             f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
-            f"{f'_xpredclip{infer_x_pred_clip}' if infer_x_pred_clip is not None else ''}"
             f"{'_gt-dur' if use_truth_duration else ''}"
             f"{'_no-ref-audio' if no_ref_audio else ''}"
             f"_target_rms{target_rms}"
@@ -334,7 +321,6 @@ def main():
                         use_epss=timestep_mapping == "sway_sampling",
                         no_ref_audio=no_ref_audio,
                         seed=seed,
-                        infer_x_pred_clip=infer_x_pred_clip,
                     )
                     # Final result
                     for i, gen in enumerate(generated):

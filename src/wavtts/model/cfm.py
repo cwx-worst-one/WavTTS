@@ -178,7 +178,6 @@ class CFM(nn.Module):
         duplicate_test=False,
         t_inter=0.1,
         edit_mask=None,
-        infer_x_pred_clip: float | None = None,
     ):
         self.eval()
         # raw wave
@@ -237,15 +236,6 @@ class CFM(nn.Module):
         def fn(t, x):
             # at each step, conditioning is fixed
             # step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
-            def maybe_clip_x_pred(pred_x_or_v):
-                if (
-                    infer_x_pred_clip is not None
-                    and infer_x_pred_clip > 0
-                    and self.prediction == "x_pred"
-                ):
-                    return pred_x_or_v.clamp(min=-infer_x_pred_clip, max=infer_x_pred_clip)
-                return pred_x_or_v
-
             def to_v(pred_x_or_v):
                 if self.prediction == "flow":
                     return pred_x_or_v
@@ -258,7 +248,6 @@ class CFM(nn.Module):
                     x=x, cond=step_cond, text=text, time=t, mask=mask,
                     drop_audio_cond=False, drop_text=False, cache=True,
                 )
-                pred = maybe_clip_x_pred(pred)
                 return to_v(pred)
 
             # predict flow (cond and uncond), for classifier-free guidance
@@ -266,8 +255,6 @@ class CFM(nn.Module):
                 x=x, cond=step_cond, text=text, time=t, mask=mask,
                 cfg_infer=True, cache=True,
             )
-            pred_cfg = maybe_clip_x_pred(pred_cfg)
-
             pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
             v_cond = to_v(pred)
             v_uncond = to_v(null_pred)
