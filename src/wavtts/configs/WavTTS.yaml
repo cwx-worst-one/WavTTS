@@ -19,7 +19,7 @@ optim:
 
 model:
   name: WavTTS_Large  # model name
-  tokenizer: pinyin  # tokenizer type
+  tokenizer: pinyin  # tokenizer type (pinyin for bilingual, char for English only)
   tokenizer_path: null  # if 'custom' tokenizer, define the path want to use (should be vocab.txt)
   backbone: DiT
   cfm:
