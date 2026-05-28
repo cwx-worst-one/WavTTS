@@ -36,6 +36,7 @@ target_rms = 0.1    # 0.1, 0.12
 
 rel_path = str(files("wavtts").joinpath("../../"))
 DEFAULT_CKPT_FILE = "hf://worstchan/WavTTS/model_1200000.pt"
+DEFAULT_VOCAB_FILE = str(files("wavtts").joinpath("infer/examples/vocab.txt"))
 
 
 def main():
@@ -72,6 +73,12 @@ def main():
     )
 
     parser.add_argument("--ckpt_path", default=DEFAULT_CKPT_FILE, type=str)
+    parser.add_argument(
+        "--vocab_file",
+        default=DEFAULT_VOCAB_FILE,
+        type=str,
+        help="Path to vocab.txt used to build the model tokenizer.",
+    )
     parser.add_argument(
         "--output_dir",
         default=None,
@@ -244,7 +251,10 @@ def main():
     )
 
     # Tokenizer
-    vocab_char_map, vocab_size = get_tokenizer(dataset_name, tokenizer)
+    if args.vocab_file:
+        vocab_char_map, vocab_size = get_tokenizer(args.vocab_file, "custom")
+    else:
+        vocab_char_map, vocab_size = get_tokenizer(dataset_name, tokenizer)
 
     # waveform geometry
     waveform_kwargs = model_cfg.model.waveform
