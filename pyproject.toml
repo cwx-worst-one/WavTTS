@@ -38,7 +38,7 @@ dependencies = [
     "torchcodec",
     "torchdiffeq",
     "tqdm",
-    "transformers>=4.45.0,<4.50.0",
+    "transformers",
     "transformers-stream-generator",
     "unidecode",
     "wandb",

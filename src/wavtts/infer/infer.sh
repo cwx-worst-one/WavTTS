@@ -13,7 +13,7 @@ GEN_TEXT="I don't really care what you call me. I've been a silent spectator, wa
 
 # Output Configuration
 OUTPUT_DIR="output"
-OUTPUT_FILE="infer_cli_basic_new.wav"
+OUTPUT_FILE="infer_cli_basic.wav"
 
 # Inference Configuration
 NFE_STEP="50"
