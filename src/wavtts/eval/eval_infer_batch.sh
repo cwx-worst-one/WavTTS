@@ -10,12 +10,12 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 MODEL_NAME=WavTTS
 RESULT_MODEL_NAME="${MODEL_NAME}"
 SEEDS=(0)
-CKPTSTEPS=(1000000)
-TASKS=("seedtts_test_en") # seedtts_test_zh, seedtts_test_en, ls_pc_test_clean
+CKPTSTEPS=(1200000)
+TASKS=("seedtts_test_en" "seedtts_test_zh") # seedtts_test_zh, seedtts_test_en, ls_pc_test_clean
 LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 GPUS="[0,1,2,3,4,5,6,7]"
 TRAIN_GPU_TAG="8gpus"   # 8gpus, 16gpus, 32gpus
-CKPT_FILE="hf://worstchan/wavtts_scale_9/model_1000000.pt"
+CKPT_FILE="hf://worstchan/WavTTS/model_1200000.pt"
 WAVLM_CKPT_DIR=""
 
 cfg_strength=3.0

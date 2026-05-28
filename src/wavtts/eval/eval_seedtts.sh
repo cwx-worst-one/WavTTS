@@ -15,9 +15,9 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 eval_metric=("wer sim utmos")
 # eval_metric=("wer")
 
-# langs=("zh" "en")        # "en" "zh" "zh_hard"
-langs=("en")
-ckpt_steps=(800000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+langs=("zh" "en")        # "en" "zh" "zh_hard"
+# langs=("en")
+ckpt_steps=(1200000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
 seed=0
 nfe_step=50         # 32, 50, 100
 ode_method="euler"

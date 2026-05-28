@@ -36,7 +36,7 @@ target_rms = 0.1    # 0.1, 0.12
 
 
 rel_path = str(files("wavtts").joinpath("../../"))
-DEFAULT_CKPT_FILE = "hf://worstchan/wavtts_scale_9/model_1000000.pt"
+DEFAULT_CKPT_FILE = "hf://worstchan/WavTTS/model_1200000.pt"
 
 
 def main():

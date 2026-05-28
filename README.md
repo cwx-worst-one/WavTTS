@@ -7,7 +7,7 @@
     <a href="#installation"><img src="https://img.shields.io/badge/Python-3.10-brightgreen.svg?logo=python&logoColor=white" alt="Python"></a>
     <a href="#"><img src="https://img.shields.io/badge/Arxiv-2605.xxxxx-b31b1b.svg?logo=arXiv" alt="arXiv"></a>
     <a href="#"><img src="https://img.shields.io/badge/🌐%20Demo-Page-orange.svg" alt="Demo"></a>
-    <a href="#model-checkpoints"><img src="https://img.shields.io/badge/🤗%20HuggingFace-Models-yellow.svg" alt="HuggingFace"></a>
+    <a href="https://huggingface.co/worstchan/WavTTS"><img src="https://img.shields.io/badge/🤗%20HuggingFace-Models-yellow.svg" alt="HuggingFace"></a>
   </p>
 
   <p align="center">
@@ -49,7 +49,7 @@ pip install -e .
 
 ## 📦 Model Checkpoints
 
-The official WavTTS checkpoint is available on Hugging Face: [WavTTS 🤗](https://huggingface.co/worstchan/wavtts_scale_9). The default checkpoint supports 16 kHz zero-shot TTS inference and will be downloaded automatically the first time you run the inference script.
+The official WavTTS checkpoint is available on Hugging Face: [WavTTS 🤗](https://huggingface.co/worstchan/WavTTS). The default checkpoint supports 16 kHz zero-shot TTS inference and will be downloaded automatically the first time you run the inference script.
 
 ## 🚀 Inference
 
@@ -85,8 +85,6 @@ For customized pipelines, you can directly modify the paths and texts in `src/wa
 bash src/wavtts/infer/infer.sh
 ```
 
-> **💡 Tip:**
-> If you notice obvious background noise in the synthesized speech, try lowering the `shift` value to mitigate it (e.g., set `shift = 1.0`).
 
 ## 🏋️ Training
 

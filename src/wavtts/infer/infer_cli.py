@@ -35,7 +35,7 @@ from wavtts.infer.utils_infer import (
 
 DEFAULT_MODEL = "WavTTS"
 DEFAULT_CKPT_FILES = {
-    DEFAULT_MODEL: "hf://worstchan/wavtts_scale_9/model_1000000.pt",
+    DEFAULT_MODEL: "hf://worstchan/WavTTS/model_1200000.pt",
 }
 
 

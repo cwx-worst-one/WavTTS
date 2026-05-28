@@ -5,7 +5,7 @@ WavTTS supports zero-shot TTS from a reference audio prompt via either command-l
 > **💡 Tip for Reference Audio:**
 > For optimal results, use a short reference clip, preferably under 12 seconds. We also recommend leaving a brief silence at the end of the clip to avoid truncating the prompt mid-word.
 
-The pretrained checkpoint is available on [🤗 Hugging Face](https://huggingface.co/worstchan/wavtts_scale_9) and will be downloaded automatically when using the default configuration. To use a local checkpoint, specify its path with the `ckpt_file` parameter.
+The pretrained checkpoint and matching vocabulary are available on [🤗 Hugging Face](https://huggingface.co/worstchan/WavTTS) and the checkpoint will be downloaded automatically when using the default configuration. To use a local checkpoint, specify its path with the `ckpt_file` parameter.
 
 
 ## CLI Inference
@@ -82,3 +82,6 @@ For batch inference, configure the task and dataset paths in `src/wavtts/eval/ev
 ```bash
 bash src/wavtts/eval/eval_infer_batch.sh --infer-only
 ```
+
+> **💡 Tip:**
+> If you notice obvious background noise in the synthesized speech, try lowering the `shift` value to mitigate it (e.g., set `shift = 1.0`).

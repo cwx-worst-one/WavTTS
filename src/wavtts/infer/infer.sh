@@ -9,7 +9,7 @@ MODEL_CFG="src/wavtts/configs/WavTTS.yaml"
 VOCAB_FILE="infer/examples/vocab.txt"
 REF_AUDIO="infer/examples/basic_ref_en.wav"
 REF_TEXT="Some call me nature, others call me mother nature."
-GEN_TEXT="I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring."
+GEN_TEXT="I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall."
 
 # Output Configuration
 OUTPUT_DIR="output"
