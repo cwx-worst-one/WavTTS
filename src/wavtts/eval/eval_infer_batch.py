@@ -19,8 +19,8 @@ from tqdm import tqdm
 from wavtts.eval.utils_eval import (
     get_inference_prompt,
     get_librispeech_test_clean_metainfo,
-    get_seedtts_testset_metainfo,
     get_libritts_custom_metainfo,
+    get_seedtts_testset_metainfo,
 )
 from wavtts.infer.utils_infer import load_checkpoint
 from wavtts.model import CFM
@@ -31,7 +31,6 @@ accelerator = Accelerator()
 device = f"cuda:{accelerator.process_index}"
 
 
-use_ema = True      # True, False
 target_rms = 0.1    # 0.1, 0.12
 
 
@@ -47,7 +46,6 @@ def main():
     parser.add_argument("-c", "--ckptstep", default=1250000, type=int)
 
     parser.add_argument("-nfe", "--nfe_step", default=50, type=int)
-    parser.add_argument("-o", "--odemethod", default="euler", choices=["euler"], help="ODE method is fixed to euler.")
     parser.add_argument("-ss", "--swaysampling", default=-1, type=float)
     parser.add_argument("--timestep_mapping", default="power", choices=["uniform", "sway_sampling", "power"])
     parser.add_argument("--timestep_power", default=2.0, type=float)
@@ -55,7 +53,10 @@ def main():
 
     parser.add_argument("-t", "--testset", required=True)
     parser.add_argument(
-        "-p", "--librispeech_test_clean_path", default=f"{rel_path}/data/LibriSpeech/test-clean", type=str
+        "-p",
+        "--librispeech_test_clean_path",
+        default=f"{rel_path}/data/LibriSpeech/test-clean",
+        type=str,
     )
     parser.add_argument(
         "--ljspeech_inset_meta",
@@ -117,7 +118,6 @@ def main():
     ckpt_step = args.ckptstep
 
     nfe_step = args.nfe_step
-    ode_method = args.odemethod
     sway_sampling_coef = args.swaysampling
     timestep_mapping = args.timestep_mapping
     timestep_power = args.timestep_power
@@ -219,16 +219,14 @@ def main():
         output_dir = (
             f"{rel_path}/"
             f"results/{result_exp_name}/{ckpt_step}/{testset}/"
-            f"seed{seed}_{ode_method}_nfe{nfe_step}_wav"
+            f"seed{seed}_nfe{nfe_step}_wav"
             f"{'_uniform' if timestep_mapping == 'uniform' else ''}"
             f"{f'_ss{sway_sampling_coef}' if timestep_mapping == 'sway_sampling' and sway_sampling_coef else ''}"
             f"{f'_power{timestep_power}' if timestep_mapping == 'power' else ''}"
             f"{f'_shift{shift}' if shift != 1.0 else ''}"
-            f"_cfg{cfg_strength}_speed{speed}_load-{load_dtype_name}_infer-{infer_dtype_name}"
+            f"_cfg{cfg_strength}"
             f"{'_gt-dur' if use_truth_duration else ''}"
             f"{'_no-ref-audio' if no_ref_audio else ''}"
-            f"_target_rms{target_rms}"
-            f"{f'_no_ema' if not use_ema else ''}"
         )
 
     # -------------------------------------------------#
@@ -264,7 +262,7 @@ def main():
         transformer=model_cls(**model_arc, text_num_embeds=vocab_size, wav_frame_len=wav_frame_len),
         waveform_kwargs=waveform_kwargs,
         odeint_kwargs=dict(
-            method=ode_method,
+            method="euler",
         ),
         vocab_char_map=vocab_char_map,
         **cfm_kwargs,
@@ -289,7 +287,7 @@ def main():
         ckpt_path = str(cached_path(ckpt_path))
 
     load_dtype = amp_dtype_map.get(load_dtype_name, torch.float32)
-    model = load_checkpoint(model, ckpt_path, device, dtype=load_dtype, use_ema=use_ema)
+    model = load_checkpoint(model, ckpt_path, device, dtype=load_dtype, use_ema=True)
 
     if not os.path.exists(output_dir) and accelerator.is_main_process:
         os.makedirs(output_dir)

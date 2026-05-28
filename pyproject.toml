@@ -50,9 +50,9 @@ dev = [
     "pytest",
 ]
 eval = [
-    "faster_whisper",
+    "faster_whisper==0.10.1",
     "funasr",
-    "jiwer==3.1.0",
+    "jiwer",
     "modelscope",
     "zhconv",
     "zhon",

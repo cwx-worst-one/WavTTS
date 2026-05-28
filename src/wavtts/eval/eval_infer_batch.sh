@@ -1,34 +1,28 @@
 #!/bin/bash
 set -e
 export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
-export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
 export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
-# export CUDA_VISIBLE_DEVICES="0"
 
 # Configuration parameters
 MODEL_NAME=WavTTS
 RESULT_MODEL_NAME="${MODEL_NAME}"
 SEEDS=(0)
 CKPTSTEPS=(1200000)
-TASKS=("seedtts_test_en" "seedtts_test_zh") # seedtts_test_zh, seedtts_test_en, ls_pc_test_clean
-LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
+TASKS=("seedtts_test_en" "seedtts_test_zh")
 GPUS="[0,1,2,3,4,5,6,7]"
-TRAIN_GPU_TAG="8gpus"   # 8gpus, 16gpus, 32gpus
-CKPT_FILE="hf://worstchan/WavTTS/model_1200000.pt"
+TRAIN_GPU_TAG="8gpus"
+# CKPT_FILE="hf://worstchan/WavTTS/model_1200000.pt"
+CKPT_FILE=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/WavTTS/model_1200000.pt
 WAVLM_CKPT_DIR=""
+LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 
 cfg_strength=3.0
-nfe_step=50         # 16, 32, 50
-ode_method="euler"
-timestep_mapping="power"   # uniform, sway_sampling, power
+nfe_step=50
+timestep_mapping="power"    # power, sway_sampling, uniform
 swaysampling=-1
 timestep_power=2.0
-shift="3.0"         # 1.0, 7.0
-LOAD_DTYPE="fp32"   # bf16, fp16, fp32
-INFER_DTYPE="bf16"  # bf16, fp16, fp32
-
-DEBUG=false  # true, false
+shift="3.0"                 # 1.0, 3.0
 
 # Parse arguments
 INFER_ONLY=true  # true, false
@@ -42,20 +36,8 @@ while [[ $# -gt 0 ]]; do
             INFER_ONLY=true
             shift
             ;;
-        --load-dtype)
-            LOAD_DTYPE="$2"
-            shift 2
-            ;;
         --result-model-name)
             RESULT_MODEL_NAME="$2"
-            shift 2
-            ;;
-        --infer-dtype)
-            INFER_DTYPE="$2"
-            shift 2
-            ;;
-        --ode-method)
-            ode_method="$2"
             shift 2
             ;;
         --timestep-mapping)
@@ -78,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             WAVLM_CKPT_DIR="$2"
             shift 2
             ;;
+        --librispeech-test-clean-path)
+            LS_TEST_CLEAN_PATH="$2"
+            shift 2
+            ;;
         *)
             echo "======== Unknown parameter: $1"
             exit 1
@@ -85,32 +71,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-case "$ode_method" in
-    euler)
-        ;;
-    *)
-        echo "======== Invalid ode method: ${ode_method}. Expected: euler"
-        exit 1
-        ;;
-esac
-
-for dtype_name in "$LOAD_DTYPE" "$INFER_DTYPE"; do
-    case "$dtype_name" in
-        bf16|fp16|fp32)
-            ;;
-        *)
-            echo "======== Invalid dtype: ${dtype_name}. Expected one of: bf16, fp16, fp32"
-            exit 1
-            ;;
-    esac
-done
-
 echo "======== Starting WavTTS batch evaluation task..."
-echo "======== Load dtype: ${LOAD_DTYPE}"
-echo "======== Infer dtype: ${INFER_DTYPE}"
 echo "======== Result model name: ${RESULT_MODEL_NAME}"
 echo "======== Timestep mapping: ${timestep_mapping}"
-echo "======== ODE method: ${ode_method}"
 echo "======== Train GPU tag: ${TRAIN_GPU_TAG}"
 if [ -n "${WAVLM_CKPT_DIR}" ]; then
     echo "======== WavLM checkpoint: ${WAVLM_CKPT_DIR}"
@@ -144,7 +107,7 @@ execute_eval_tasks() {
     local seed=$2
     local task_name=$3
     
-    local gen_wav_dir="results/${RESULT_EXPNAME}/${ckptstep}/${task_name}/seed${seed}_${ode_method}_nfe${nfe_step}_wav"
+    local gen_wav_dir="results/${RESULT_EXPNAME}/${ckptstep}/${task_name}/seed${seed}_nfe${nfe_step}_wav"
     if [ "${timestep_mapping}" = "uniform" ]; then
         gen_wav_dir+="_uniform"
     fi
@@ -157,9 +120,8 @@ execute_eval_tasks() {
     if [ "${shift}" != "1.0" ]; then
         gen_wav_dir+="_shift${shift}"
     fi
-    gen_wav_dir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}"
-    gen_wav_dir+="_target_rms0.1"
-    
+    gen_wav_dir+="_cfg${cfg_strength}"
+
     echo ">>>>>>>> Starting eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}, gen_wav_dir=${gen_wav_dir}"
     
     local wavlm_ckpt_args=()
@@ -184,7 +146,7 @@ execute_eval_tasks() {
             python src/wavtts/eval/eval_utmos.py --audio_dir "$gen_wav_dir"
             ;;
     esac
-    
+
     echo ">>>>>>>> Completed eval task: ckptstep=${ckptstep}, seed=${seed}, task=${task_name}"
 }
 
@@ -205,17 +167,11 @@ for ckptstep in "${CKPTSTEPS[@]}"; do
         
         # Execute each infer task sequentially
         for task in "${TASKS[@]}"; do
-            echo ">>>>>>>> Executing infer task: accelerate launch src/wavtts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --odemethod ${ode_method} --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}"
-            
-            # Execute infer task (foreground execution, wait for completion)
-            if [ "$DEBUG" = false ]; then
-                accelerate launch --main_process_port ${MASTER_PORT} src/wavtts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
-            fi
+            echo ">>>>>>>> Executing infer task: accelerate launch src/wavtts/eval/eval_infer_batch.py -s ${seed} -n \"${MODEL_NAME}\" -t \"${task}\" -c ${ckptstep} --ckpt_path \"${CKPT_PATH}\" --result_expname \"${RESULT_EXPNAME}\" --cfg_strength ${cfg_strength} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} -p \"${LS_TEST_CLEAN_PATH}\""
 
-            if [ "$DEBUG" = true ]; then
-                python -m debugpy --listen 127.0.0.1:56789 --wait-for-client src/wavtts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} -p "${LS_TEST_CLEAN_PATH}" --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --odemethod ${ode_method} --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} --load_dtype ${LOAD_DTYPE} --infer_dtype ${INFER_DTYPE}
-            fi
-            
+            # Execute infer task
+            accelerate launch --main_process_port ${MASTER_PORT} src/wavtts/eval/eval_infer_batch.py -s ${seed} -n "${MODEL_NAME}" -t "${task}" -c ${ckptstep} --ckpt_path "${CKPT_PATH}" --result_expname "${RESULT_EXPNAME}" --nfe_step ${nfe_step} --swaysampling ${swaysampling} --timestep_mapping ${timestep_mapping} --timestep_power ${timestep_power} --shift ${shift} --cfg_strength ${cfg_strength} -p "${LS_TEST_CLEAN_PATH}"
+
             # If not infer-only mode, launch corresponding eval task
             if [ "$INFER_ONLY" = false ]; then
                 # Launch corresponding eval task (background execution, non-blocking for next infer)

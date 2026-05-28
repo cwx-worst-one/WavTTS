@@ -6,40 +6,24 @@ export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
 export MASTER_ADDR="127.0.0.1"
 export MASTER_PORT=53721
 export OMP_NUM_THREADS=1
-export HF_ENDPOINT=https://hf-mirror.com
-export LD_LIBRARY_PATH=/mnt/bn/jdy-lq-5/chenwenxi/code/env/wavtts/lib/python3.11/site-packages/nvidia/cublas/lib:/mnt/bn/jdy-lq-5/chenwenxi/code/env/wavtts/lib/python3.11/site-packages/nvidia/cudnn/lib
-export HTTP_PROXY=http://sys-proxy-rd-relay.byted.org:8118
-export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
-export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 
 eval_metric=("wer sim utmos")
-# eval_metric=("wer")
 
-langs=("zh" "en")        # "en" "zh" "zh_hard"
-# langs=("en")
-ckpt_steps=(1200000)    # 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1500000, 1600000
+langs=("zh" "en")
+ckpt_steps=(1200000)
 seed=0
-nfe_step=50         # 32, 50, 100
-ode_method="euler"
+nfe_step=50
 cfg_strength=3.0
-timestep_mapping="power"    # uniform, power, sway_sampling
-swaysampling=-1.0
+timestep_mapping="power"
 timestep_power=2.0
 shift="3.0"
-target_rms=0.1
-use_ema=true                # true, false
-LOAD_DTYPE="fp32"
-INFER_DTYPE="bf16"
-RESULTS_ROOT=/mnt/bn/jdy-lq-5/chenwenxi/code/WavTTS_final_release/results/WavTTS
+RESULTS_ROOT=./results/WavTTS
 GPUS="[0,1,2,3,4,5,6,7]"
-# GPUS="[0,1,2,3]"
-# GPUS="[0,1]"
-# GPUS="[0]"
 
 LOCAL=""
 WAVLM_CKPT_DIR="/mnt/bn/jdy-lq-5/chenwenxi/models/wavlm/wavlm_large_finetune.pth"
 
-gen_wav_subdir=seed${seed}_${ode_method}_nfe${nfe_step}_wav
+gen_wav_subdir=seed${seed}_nfe${nfe_step}_wav
 if [[ "${timestep_mapping}" == "uniform" ]]; then
     gen_wav_subdir+="_uniform"
 fi
@@ -52,11 +36,7 @@ fi
 if [[ "${shift}" != "1.0" ]]; then
     gen_wav_subdir+="_shift${shift}"
 fi
-gen_wav_subdir+="_cfg${cfg_strength}_speed1.0_load-${LOAD_DTYPE}_infer-${INFER_DTYPE}_target_rms${target_rms}"
-
-if [[ "${use_ema}" == "false" ]]; then
-    gen_wav_subdir+="_no_ema"
-fi
+gen_wav_subdir+="_cfg${cfg_strength}"
 
 
 for ckpt_step in "${ckpt_steps[@]}"; do
