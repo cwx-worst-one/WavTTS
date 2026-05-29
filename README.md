@@ -5,7 +5,7 @@
 
   <p align="center">
     <a href="#installation"><img src="https://img.shields.io/badge/Python-3.10-brightgreen.svg?logo=python&logoColor=white" alt="Python"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Arxiv-2605.xxxxx-b31b1b.svg?logo=arXiv" alt="arXiv"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Arxiv-Coming Soon-b31b1b.svg?logo=arXiv" alt="arXiv"></a>
     <a href="#"><img src="https://img.shields.io/badge/🌐%20Demo-Page-orange.svg" alt="Demo"></a>
     <a href="https://huggingface.co/worstchan/WavTTS"><img src="https://img.shields.io/badge/🤗%20HuggingFace-Models-yellow.svg" alt="HuggingFace"></a>
   </p>
@@ -18,7 +18,8 @@
 
 ## 📖 Introduction
 
-WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space, without relying on intermediate acoustic representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-quality waveform generation. For more details, please refer to our paper: [WavTTS: Towards High-Quality Zero-Shot TTS via Direct Raw Waveform Modeling](https://arxiv.org/abs/2605.00000).
+WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space, without relying on intermediate acoustic representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-quality waveform generation.
+<!-- For more details, please refer to our paper: [WavTTS: Towards High-Quality Zero-Shot TTS via Direct Raw Waveform Modeling](https://arxiv.org/abs/2605.00000). -->
 
 <div align="center">
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
