@@ -6,7 +6,7 @@
   <p align="center">
     <a href="#installation"><img src="https://img.shields.io/badge/Python-3.10-brightgreen.svg?logo=python&logoColor=white" alt="Python"></a>
     <a href="#"><img src="https://img.shields.io/badge/Arxiv-Coming Soon-b31b1b.svg?logo=arXiv" alt="arXiv"></a>
-    <a href="#"><img src="https://img.shields.io/badge/🌐%20Demo-Page-orange.svg" alt="Demo"></a>
+    <a href="https://wavtts.github.io/"><img src="https://img.shields.io/badge/🌐%20Demo-Page-orange.svg" alt="Demo"></a>
     <a href="https://huggingface.co/worstchan/WavTTS"><img src="https://img.shields.io/badge/🤗%20HuggingFace-Models-yellow.svg" alt="HuggingFace"></a>
   </p>
 
@@ -25,8 +25,13 @@ WavTTS is an end-to-end zero-shot TTS framework that generates speech directly i
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
 </div>
 
-
 **Note:** This repository is based on [F5-TTS](https://github.com/SWivid/F5-TTS). For general usage, troubleshooting, and basic guidance, please refer to the original F5-TTS repository. The sections below outline workflows specific to WavTTS.
+
+## 🚀 News
+
+- **[2026-05-31]**: We have released the WavTTS codebase along with the official 16 kHz checkpoint. Please note that this project is still under active development, and we will continue to roll out updates and improvements.
+
+
 
 ## ⚙️ Installation
 
