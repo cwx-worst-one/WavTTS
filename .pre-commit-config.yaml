@@ -1,43 +1,14 @@
-fail_fast: false
-exclude: ^mariana/.*$
 repos:
-  - repo: https://github.com/pycqa/isort
-    rev: 5.12.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.11.2
     hooks:
-      - id: isort
-        files: ^samantha/.+\.py$
-        args: [--settings-path, setup.cfg]
-
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 24.2.0
+      - id: ruff
+        name: ruff linter
+        args: [--fix]
+      - id: ruff-format
+        name: ruff formatter
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
     hooks:
-      - id: black
-        files: ^samantha/.+\.py$
-        args: [--config, pyproject.toml]
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.0.0
-    hooks:
-      - id: flake8
-        files: ^samantha/.+\.py$
-        args:
-        - --config
-        - setup.cfg
-        - --max-line-length
-        - "120"
-        - --max-doc-length
-        - "200"
-        - --ignore=E701,W503,E999,F405,F401,E712,F403,E203,F821,F811
-        - --count
-        - --statistics
-
-  - repo: https://github.com/adrienverge/yamllint
-    rev: v1.26.3
-    hooks:
-      - id: yamllint
-        types: [yaml]
-        files: ^(samantha|recipes)/.*$
-        args:
-          - -c
-          - .yamllint
-          - --no-warnings
+      - id: check-yaml

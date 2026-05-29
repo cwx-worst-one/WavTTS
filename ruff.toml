@@ -2,6 +2,7 @@ line-length = 120
 target-version = "py310"
 
 [lint]
+extend-select = ["I"]
 # Only ignore variables with names starting with "_".
 dummy-variable-rgx = "^_.*$"
 
