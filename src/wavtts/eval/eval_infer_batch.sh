@@ -12,8 +12,7 @@ CKPTSTEPS=(1200000)
 TASKS=("seedtts_test_en" "seedtts_test_zh")
 GPUS="[0,1,2,3,4,5,6,7]"
 TRAIN_GPU_TAG="8gpus"
-# CKPT_FILE="hf://worstchan/WavTTS/model_1200000.pt"
-CKPT_FILE=/mnt/bn/jdy-lq-5/chenwenxi/exp/nar_wav_tts/emilia/WavTTS/model_1200000.pt
+CKPT_FILE="hf://worstchan/WavTTS/model_1200000.pt"
 WAVLM_CKPT_DIR=""
 LS_TEST_CLEAN_PATH="data/LibriSpeech/test-clean"
 

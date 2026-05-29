@@ -3,8 +3,6 @@ set -e
 
 # Environment variables; adjust as needed.
 export PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning"
-export MASTER_ADDR="127.0.0.1"
-export MASTER_PORT=53721
 export OMP_NUM_THREADS=1
 
 eval_metric=("wer sim utmos")
@@ -21,7 +19,7 @@ RESULTS_ROOT=./results/WavTTS
 GPUS="[0,1,2,3,4,5,6,7]"
 
 LOCAL=""
-WAVLM_CKPT_DIR="/mnt/bn/jdy-lq-5/chenwenxi/models/wavlm/wavlm_large_finetune.pth"
+WAVLM_CKPT_DIR="<PATH_TO_WAVLM_LARGE_FINETUNE_PTH>"
 
 gen_wav_subdir=seed${seed}_nfe${nfe_step}_wav
 if [[ "${timestep_mapping}" == "uniform" ]]; then

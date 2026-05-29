@@ -53,37 +53,6 @@ def get_librispeech_test_clean_metainfo(metalst, librispeech_test_clean_path):
     return metainfo
 
 
-def get_libritts_custom_metainfo(metalst, libritts_base_path):
-    f = open(metalst, 'r', encoding='utf-8')
-    lines = f.readlines()
-    f.close()
-    
-    metainfo = []
-    for line in lines:
-        parts = line.strip().split("\t")
-        if len(parts) != 6:
-            print(f"Skipping invalid line: {line.strip()}")
-            continue
-            
-        ref_utt, ref_dur, ref_txt, gen_utt, gen_dur, gen_txt = parts
-
-        ref_parts = ref_utt.split("_")
-        ref_spk_id = ref_parts[0]
-        ref_chaptr_id = ref_parts[1]
-        
-        ref_wav = os.path.join(libritts_base_path, ref_spk_id, ref_chaptr_id, ref_utt + ".wav")
-
-        gen_parts = gen_utt.split("_")
-        gen_spk_id = gen_parts[0]
-        gen_chaptr_id = gen_parts[1]
-        
-        gen_wav = os.path.join(libritts_base_path, gen_spk_id, gen_chaptr_id, gen_utt + ".wav")
-
-        metainfo.append((gen_utt, ref_txt, ref_wav, " " + gen_txt, gen_wav))
-
-    return metainfo
-
-
 def padded_wav_batch(wavs):
     """
     wavs: list[Tensor], each [1, T]
@@ -302,50 +271,6 @@ def get_librispeech_test(metalst, gen_wav_dir, gpus, librispeech_test_clean_path
     test_set = []
     for i in range(num_jobs):
         test_set.append((gpus[i], test_set_[i * wav_per_job : (i + 1) * wav_per_job]))
-
-    return test_set
-
-
-def get_libritts_test(metalst, gen_wav_dir, gpus, libritts_root_path, eval_ground_truth=False):
-    f = open(metalst, 'r', encoding='utf-8')
-    lines = f.readlines()
-    f.close()
-
-    test_set_ = []
-    for line in tqdm(lines, desc="Loading Meta"):
-        parts = line.strip().split("\t")
-        if len(parts) < 6:
-            continue
-            
-        ref_utt, ref_dur, ref_txt, gen_utt, gen_dur, gen_txt = parts
-
-        if eval_ground_truth:
-            gen_parts = gen_utt.split("_")
-            gen_spk_id = gen_parts[0]
-            gen_chaptr_id = gen_parts[1]
-            gen_wav = os.path.join(libritts_root_path, gen_spk_id, gen_chaptr_id, gen_utt + ".wav")
-        else:
-            gen_wav = os.path.join(gen_wav_dir, gen_utt + ".wav")
-            if not os.path.exists(gen_wav):
-                raise FileNotFoundError(f"Generated wav not found: {gen_wav}")
-
-        ref_parts = ref_utt.split("_")
-        ref_spk_id = ref_parts[0]
-        ref_chaptr_id = ref_parts[1]
-        ref_wav = os.path.join(libritts_root_path, ref_spk_id, ref_chaptr_id, ref_utt + ".wav")
-
-        test_set_.append((gen_wav, ref_wav, gen_txt))
-
-    num_jobs = len(gpus)
-    if num_jobs == 1:
-        return [(gpus[0], test_set_)]
-
-    wav_per_job = len(test_set_) // num_jobs + 1
-    test_set = []
-    for i in range(num_jobs):
-        chunk = test_set_[i * wav_per_job : (i + 1) * wav_per_job]
-        if chunk:
-            test_set.append((gpus[i], chunk))
 
     return test_set
 

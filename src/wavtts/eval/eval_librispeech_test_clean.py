@@ -14,7 +14,7 @@ from importlib.resources import files
 
 import numpy as np
 
-from wavtts.eval.utils_eval import get_librispeech_test, run_asr_wer, run_sim, get_libritts_test
+from wavtts.eval.utils_eval import get_librispeech_test, run_asr_wer, run_sim
 
 
 rel_path = str(files("wavtts").joinpath("../../"))
@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument(
         "-n", "--gpu_nums", type=str, default="8", help="Number of GPUs to use (e.g., 8) or GPU list (e.g., [0,1,2,3])"
     )
-    parser.add_argument("-t", "--task", type=str, default="ls_pc_test_clean", choices=["ls_pc_test_clean", "libritts_train_clean_100_cross_sentence", "libritts_train_clean_100_same_sentence"])
+    parser.add_argument("-t", "--task", type=str, default="ls_pc_test_clean", choices=["ls_pc_test_clean"])
     parser.add_argument(
         "--wavlm_ckpt_dir",
         type=str,
@@ -60,20 +60,10 @@ def main():
     librispeech_test_clean_path = args.librispeech_test_clean_path  # test-clean path
     gen_wav_dir = args.gen_wav_dir
 
-    if args.task == "ls_pc_test_clean":
-        metalst = rel_path + "/data/librispeech_pc_test_clean_cross_sentence.lst"
-    elif args.task == "libritts_train_clean_100_cross_sentence":
-        metalst = rel_path + "/data/LibriTTS/train-clean-100-cross-sentence.meta.lst"
-    elif args.task == "libritts_train_clean_100_same_sentence":
-        metalst = rel_path + "/data/LibriTTS/train-clean-100-same-sentence.meta.lst"
-    else:
-        raise ValueError(f"Unknown task: {args.task}")
+    metalst = rel_path + "/data/librispeech_pc_test_clean_cross_sentence.lst"
 
     gpus = parse_gpu_nums(args.gpu_nums)
-    if args.task == "ls_pc_test_clean":
-        test_set = get_librispeech_test(metalst, gen_wav_dir, gpus, librispeech_test_clean_path)
-    elif args.task == "libritts_train_clean_100_cross_sentence" or args.task == "libritts_train_clean_100_same_sentence":
-        test_set = get_libritts_test(metalst, gen_wav_dir, gpus, librispeech_test_clean_path)
+    test_set = get_librispeech_test(metalst, gen_wav_dir, gpus, librispeech_test_clean_path)
 
     ## In LibriSpeech, some speakers utilized varying voice characteristics for different characters in the book,
     ## leading to a low similarity for the ground truth in some cases.

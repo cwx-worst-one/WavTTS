@@ -1,6 +1,6 @@
 <div align="center">
   <h1>
-  WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling
+  WavTTS: Towards High-Quality Zero-Shot TTS via Direct Raw Waveform Modeling
   </h1> 
 
   <p align="center">
@@ -18,7 +18,7 @@
 
 ## 📖 Introduction
 
-WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space, without relying on intermediate acoustic representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-fidelity waveform generation. For more details, please refer to our paper: [WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling](https://arxiv.org/abs/2605.00000).
+WavTTS is an end-to-end zero-shot TTS framework that generates speech directly in the raw waveform space, without relying on intermediate acoustic representations such as mel-spectrograms, VAE latents, or codec tokens. Built on flow matching with DiT, WavTTS combines waveform patchification, multi-scale mel-spectrogram supervision, and optimized noise scheduling to achieve high-quality waveform generation. For more details, please refer to our paper: [WavTTS: Towards High-Quality Zero-Shot TTS via Direct Raw Waveform Modeling](https://arxiv.org/abs/2605.00000).
 
 <div align="center">
   <img src="docs/static/images/wavtts_pipeline.png" alt="WavTTS pipeline" width="85%">
@@ -141,7 +141,7 @@ If you find this work useful in your research, please consider citing our paper:
 
 ```bibtex
 @article{chen2026wavtts,
-  title={WavTTS: Towards High-Fidelity Zero-Shot TTS via Direct Raw Waveform Modeling},
+  title={WavTTS: Towards High-Quality Zero-Shot TTS via Direct Raw Waveform Modeling},
   author={TODO},
   journal={TODO},
   year={TODO}
