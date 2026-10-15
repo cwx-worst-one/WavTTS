@@ -24,10 +24,10 @@ from wavtts.infer.utils_infer import (
     nfe_step,
     preprocess_ref_audio_text,
     remove_silence_for_generated_wav,
+    shift,
     speed,
     sway_sampling_coef,
     target_rms,
-    shift,
     timestep_mapping,
     timestep_power,
 )
@@ -223,12 +223,22 @@ if save_chunk and use_legacy_text:
 
 remove_silence = args.remove_silence or config.get("remove_silence", False)
 target_rms = args.target_rms or config.get("target_rms", target_rms)
-cross_fade_duration = args.cross_fade_duration or config.get("cross_fade_duration", cross_fade_duration)
+cross_fade_duration = (
+    args.cross_fade_duration
+    if args.cross_fade_duration is not None
+    else config.get("cross_fade_duration", cross_fade_duration)
+)
 nfe_step = args.nfe_step or config.get("nfe_step", nfe_step)
-cfg_strength = args.cfg_strength or config.get("cfg_strength", cfg_strength)
-sway_sampling_coef = args.sway_sampling_coef or config.get("sway_sampling_coef", sway_sampling_coef)
+cfg_strength = args.cfg_strength if args.cfg_strength is not None else config.get("cfg_strength", cfg_strength)
+sway_sampling_coef = (
+    args.sway_sampling_coef
+    if args.sway_sampling_coef is not None
+    else config.get("sway_sampling_coef", sway_sampling_coef)
+)
 timestep_mapping = args.timestep_mapping or config.get("timestep_mapping", timestep_mapping)
-timestep_power = args.timestep_power if args.timestep_power is not None else config.get("timestep_power", timestep_power)
+timestep_power = (
+    args.timestep_power if args.timestep_power is not None else config.get("timestep_power", timestep_power)
+)
 shift = args.shift if args.shift is not None else config.get("shift", shift)
 if timestep_mapping == "power" and timestep_power is None:
     raise ValueError("--timestep_power must be provided when --timestep_mapping power is used")
@@ -265,7 +275,6 @@ if save_chunk:
     output_chunk_dir = os.path.join(output_dir, f"{Path(output_file).stem}_chunks")
     if not os.path.exists(output_chunk_dir):
         os.makedirs(output_chunk_dir)
-
 
 
 # load TTS model
