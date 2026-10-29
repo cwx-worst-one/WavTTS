@@ -23,7 +23,7 @@ from tqdm import tqdm
 from wavtts.model.utils import convert_char_to_pinyin
 
 
-PRETRAINED_VOCAB_PATH = files("wavtts").joinpath("../../data/Emilia_ZH_EN_pinyin/vocab.txt")
+PRETRAINED_VOCAB_PATH = files("wavtts").joinpath("infer/examples/vocab.txt")
 
 
 def is_csv_wavs_format(input_dataset_dir):
